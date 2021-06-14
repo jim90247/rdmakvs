@@ -11,9 +11,9 @@ message RdmaPeerQueuePairInfo {
 
 message RdmaPeerMemoryRegionInfo {
   // Base address
-  fixed64 address = 1;
+  uint64 address = 1;
   // Remote key
-  fixed32 remote_key = 2;
+  uint32 remote_key = 2;
   // Buffer size
   uint64 size = 3;
 }

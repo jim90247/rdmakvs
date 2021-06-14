@@ -8,15 +8,25 @@
 #include <cstdlib>
 #include <cstring>
 #include <network/rdma.hpp>
+#include <random>
 #include <stdexcept>
 #include <string>
 
-RdmaEndpoint::RdmaEndpoint(char *ib_dev_name, uint8_t ib_dev_port, size_t buffer_size,
-                           uint32_t max_send_count, uint32_t max_recv_count, ibv_qp_type qp_type)
-    : ib_dev_port_(ib_dev_port), buf_size_(buffer_size) {
-    buf_size_ = roundup(buf_size_, sysconf(_SC_PAGESIZE));
-    buf_ = new uint8_t[buf_size_]();  // initialize with 0
-    CHECK(buf_ != nullptr) << "Failed to allocate buffer of size " << buf_size_ << " bytes";
+RdmaEndpoint::RdmaEndpoint(char *ib_dev_name, uint8_t ib_dev_port, char *buffer, size_t buffer_size,
+                           uint32_t max_send_count, uint32_t max_recv_count, ibv_qp_type qp_type,
+                           uint64_t wr_offset, uint64_t wr_count)
+    : ib_dev_port_(ib_dev_port),
+      buf_(buffer),
+      buf_size_(buffer_size),
+      next_wr_id_(wr_offset),
+      kWorkRequestIdOffset(wr_offset),
+      kWorkRequestIdRegionSize(wr_count),
+      zmq_socket_(nullptr) {
+    CHECK(buf_ != nullptr) << "Provided buffer pointer is a nullptr";
+
+    zmq_context_ = zmq_ctx_new();
+    CHECK(zmq_context_ != nullptr)
+        << "Failed to create zeromq context: " << zmq_strerror(zmq_errno());
 
     ctx_ = GetIbContextFromDevice(ib_dev_name, ib_dev_port_);
     CHECK(ctx_ != nullptr) << "Failed to get InfiniBand context";
@@ -113,19 +123,24 @@ struct ibv_context *RdmaEndpoint::GetIbContextFromDevice(const char *target_devi
 }
 
 void RdmaEndpoint::PopulateLocalInfo() {
-    local_info_.Clear();
+    // For packet serial number generation. Following the implementation in perftest to use random
+    // numbers.
+    // Using lrand48() & 0xffffff will result in a bug that set_packet_serial_number() does not set
+    // the value.
+    static thread_local std::mt19937 generator;
+    std::uniform_int_distribution<uint32_t> distribution(0, 1 << 20);
 
-    RdmaPeerQueuePairInfo qp_info;
-    qp_info.set_queue_pair_number(qp_->qp_num);
-    qp_info.set_packet_serial_number(lrand48() & 0xffffff);
-    qp_info.set_local_identifier(ib_dev_port_info_.lid);
-    local_info_.set_allocated_queue_pair(&qp_info);
+    RdmaPeerQueuePairInfo *qp_info = local_info_.mutable_queue_pair();
+    qp_info->set_queue_pair_number(qp_->qp_num);
+    qp_info->set_packet_serial_number(distribution(generator));
+    qp_info->set_local_identifier(ib_dev_port_info_.lid);
 
-    RdmaPeerMemoryRegionInfo *mr_info;
-    mr_info = local_info_.add_memory_regions();
+    RdmaPeerMemoryRegionInfo *mr_info = local_info_.add_memory_regions();
     mr_info->set_address(reinterpret_cast<uint64_t>(mr_->addr));
     mr_info->set_remote_key(mr_->rkey);
     mr_info->set_size(buf_size_);
+
+    LOG(INFO) << "Local information to share with peers: " << local_info_.ShortDebugString();
 }
 
 struct ibv_qp *RdmaEndpoint::PrepareQueuePair(uint32_t max_send_count, uint32_t max_recv_count,
@@ -157,6 +172,28 @@ struct ibv_qp *RdmaEndpoint::PrepareQueuePair(uint32_t max_send_count, uint32_t 
                         IBV_QP_STATE | IBV_QP_PKEY_INDEX | IBV_QP_PORT | IBV_QP_ACCESS_FLAGS) == 0)
         << "Failed to modify queue pair to INIT";
     return qp;
+}
+
+size_t RdmaEndpoint::ExchangePeerInfo(void *zmq_socket, bool send_first) {
+    char remote_info_cstr[kZmqMessageBufferSize];
+    RdmaPeerInfo remote_info;
+    std::string local_info_str = local_info_.SerializeAsString();
+
+    if (send_first) {
+        zmq_send(zmq_socket_, local_info_str.data(), local_info_str.size(), 0);
+        zmq_recv(zmq_socket_, remote_info_cstr, sizeof(remote_info_cstr), 0);
+    } else {
+        zmq_recv(zmq_socket_, remote_info_cstr, sizeof(remote_info_cstr), 0);
+        zmq_send(zmq_socket_, local_info_str.data(), local_info_str.size(), 0);
+    }
+
+    remote_info.ParseFromString(remote_info_cstr);
+    remote_info_.push_back(remote_info);
+
+    LOG(INFO) << "Remote peer" << remote_info_.size()
+              << " information: " << remote_info.ShortDebugString();
+
+    return remote_info_.size() - 1;
 }
 
 void RdmaEndpoint::ConnectQueuePair(ibv_qp *qp, RdmaPeerQueuePairInfo remote_qp_info) {
@@ -196,45 +233,112 @@ void RdmaEndpoint::ConnectQueuePair(ibv_qp *qp, RdmaPeerQueuePairInfo remote_qp_
 
 void RdmaEndpoint::Write(void *addr) {}
 void RdmaEndpoint::Read(void *addr) {}
-void RdmaEndpoint::Send() {}
-void RdmaEndpoint::Recv() {}
-void RdmaEndpoint::CompareAndSwap(void *addr) {}
-void RdmaEndpoint::Poll() {}
 
-RdmaServer::RdmaServer(char *ib_dev_name, uint8_t ib_dev_port, size_t buffer_size,
-                       uint32_t max_send_count, uint32_t max_recv_count, ibv_qp_type qp_type)
-    : RdmaEndpoint(ib_dev_name, ib_dev_port, buffer_size, max_send_count, max_recv_count, qp_type) {
-    zmq_context_ = zmq_ctx_new();
-    zmq_service_socket_ = zmq_socket(zmq_context_, ZMQ_REP);
+uint64_t RdmaEndpoint::Send(uint64_t offset, uint32_t length, unsigned int flags,
+                            ibv_send_wr **bad_wr) {
+    struct ibv_sge sg = {
+        .addr = reinterpret_cast<uint64_t>(mr_->addr) + offset,
+        .length = length,
+        .lkey = mr_->lkey,
+    };
+
+    struct ibv_send_wr *local_bad_wr, wr = {
+                                          .wr_id = IncrementWorkRequestId(),
+                                          .next = nullptr,
+                                          .sg_list = &sg,
+                                          .num_sge = 1,
+                                          .opcode = IBV_WR_SEND,
+                                          .send_flags = flags,
+                                      };
+
+    int rc = ibv_post_send(qp_, &wr, bad_wr == nullptr ? &local_bad_wr : bad_wr);
+
+    LOG_IF(ERROR, rc != 0) << "Error posting IBV_WR_SEND work request: " << strerror(rc);
+
+    return wr.wr_id;
+}
+
+uint64_t RdmaEndpoint::Recv(uint64_t offset, uint32_t length, ibv_recv_wr **bad_wr) {
+    struct ibv_sge sg = {
+        .addr = reinterpret_cast<uint64_t>(mr_->addr) + offset,
+        .length = length,
+        .lkey = mr_->lkey,
+    };
+
+    struct ibv_recv_wr *local_bad_wr, wr = {
+                                          .wr_id = IncrementWorkRequestId(),
+                                          .next = nullptr,
+                                          .sg_list = &sg,
+                                          .num_sge = 1,
+                                      };
+
+    int rc = ibv_post_recv(qp_, &wr, bad_wr == nullptr ? &local_bad_wr : bad_wr);
+
+    LOG_IF(ERROR, rc != 0) << "Error posting recv wr: " << strerror(rc);
+
+    return wr.wr_id;
+}
+
+void RdmaEndpoint::CompareAndSwap(void *addr) {}
+
+void RdmaEndpoint::PollCompletionQueue(std::unordered_set<uint64_t> &completed_wr,
+                                       bool poll_until_found, uint64_t wr_id) {
+    const int kBatch = 32;
+    struct ibv_wc wc_list[kBatch];
+    int n = 0;
+    do {
+        n = ibv_poll_cq(cq_, kBatch, wc_list);
+
+        CHECK(n >= 0) << "Error polling completion queue " << n;
+
+        for (int i = 0; i < n; i++) {
+            LOG_IF(ERROR, wc_list[i].status != IBV_WC_SUCCESS)
+                << "Work request " << wc_list[i].wr_id
+                << " completed with error: " << ibv_wc_status_str(wc_list[i].status);
+            completed_wr.insert(wc_list[i].wr_id);
+        }
+    } while (n == 0 || (poll_until_found && completed_wr.find(wr_id) == completed_wr.end()));
+}
+
+uint64_t RdmaEndpoint::IncrementWorkRequestId() {
+    uint64_t current = next_wr_id_;
+    next_wr_id_ = (next_wr_id_ + 1 - kWorkRequestIdOffset) % kWorkRequestIdRegionSize +
+                  kWorkRequestIdRegionSize;
+    return current;
+}
+
+RdmaServer::RdmaServer(char *ib_dev_name, uint8_t ib_dev_port, char *buffer, size_t buffer_size,
+                       uint32_t max_send_count, uint32_t max_recv_count, ibv_qp_type qp_type,
+                       uint64_t wr_offset, uint64_t wr_count)
+    : RdmaEndpoint(ib_dev_name, ib_dev_port, buffer, buffer_size, max_send_count, max_recv_count,
+                   qp_type, wr_offset, wr_count) {
+    zmq_socket_ = zmq_socket(zmq_context_, ZMQ_REP);
+    CHECK(zmq_socket_ != nullptr) << "Failed to open zeromq REP socket: "
+                                  << zmq_strerror(zmq_errno());
 }
 
 RdmaServer::~RdmaServer() {
-    zmq_close(zmq_service_socket_);
+    zmq_close(zmq_socket_);
     zmq_ctx_destroy(zmq_context_);
 }
 
 void RdmaServer::Listen(const char *endpoint) {
-    RdmaPeerInfo remote_info;
-    char buffer[kZmqMessageBufferSize];
-    std::string serialized_local_info = local_info_.SerializeAsString();
+    CHECK(zmq_bind(zmq_socket_, endpoint) == 0) << "Failed to bind " << endpoint;
 
-    CHECK(zmq_bind(zmq_service_socket_, endpoint) == 0) << "Failed to bind " << endpoint;
+    size_t remote_id = ExchangePeerInfo(zmq_socket_, false);
 
-    zmq_recv(zmq_service_socket_, buffer, sizeof(buffer), 0);
-    remote_info.ParseFromString(buffer);
-    remote_info_.push_back(remote_info);
-
-    zmq_send(zmq_service_socket_, serialized_local_info.c_str(), serialized_local_info.length(), 0);
-
-    ConnectQueuePair(qp_, remote_info.queue_pair());
+    ConnectQueuePair(qp_, remote_info_[remote_id].queue_pair());
     LOG(INFO) << "Queue pair is ready to send";
 }
 
-RdmaClient::RdmaClient(char *ib_dev_name, uint8_t ib_dev_port, size_t buffer_size,
-                       uint32_t max_send_count, uint32_t max_recv_count, ibv_qp_type qp_type)
-    : RdmaEndpoint(ib_dev_name, ib_dev_port, buffer_size, max_send_count, max_recv_count, qp_type) {
-    zmq_context_ = zmq_ctx_new();
+RdmaClient::RdmaClient(char *ib_dev_name, uint8_t ib_dev_port, char *buffer, size_t buffer_size,
+                       uint32_t max_send_count, uint32_t max_recv_count, ibv_qp_type qp_type,
+                       uint64_t wr_offset, uint64_t wr_count)
+    : RdmaEndpoint(ib_dev_name, ib_dev_port, buffer, buffer_size, max_send_count, max_recv_count,
+                   qp_type, wr_offset, wr_count) {
     zmq_socket_ = zmq_socket(zmq_context_, ZMQ_REQ);
+    CHECK(zmq_socket_ != nullptr) << "Failed to open zeromq REQ socket: "
+                                  << zmq_strerror(zmq_errno());
 }
 
 RdmaClient::~RdmaClient() {
@@ -243,19 +347,11 @@ RdmaClient::~RdmaClient() {
 }
 
 void RdmaClient::Connect(const char *endpoint) {
-    RdmaPeerInfo remote_info;
-    char buffer[kZmqMessageBufferSize];
-    std::string serialized_local_info = local_info_.SerializeAsString();
-
     CHECK(zmq_connect(zmq_socket_, endpoint) == 0) << "Failed to connect " << endpoint;
 
-    zmq_send(zmq_socket_, serialized_local_info.c_str(), serialized_local_info.length(), 0);
+    size_t remote_id = ExchangePeerInfo(zmq_socket_, true);
 
-    zmq_recv(zmq_socket_, buffer, sizeof(buffer), 0);
-    remote_info.ParseFromString(buffer);
-    remote_info_.push_back(remote_info);
-
-    ConnectQueuePair(qp_, remote_info.queue_pair());
+    ConnectQueuePair(qp_, remote_info_[remote_id].queue_pair());
     LOG(INFO) << "Queue pair is ready to send";
 }
 
