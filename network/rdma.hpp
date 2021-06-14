@@ -1,15 +1,11 @@
 #pragma once
 
 #include <infiniband/verbs.h>
+#include <network/rdma.pb.h>
 #include <zmq.h>
 
 #include <network/common.hpp>
-
-struct QpPublishInfo {
-    uint32_t queue_pair_number;
-    uint32_t packet_serial_number;
-    uint16_t local_identifier;
-};
+#include <vector>
 
 // base class for any rdma service. establish ibv context, queue pair, etc.
 class RdmaEndpoint {
@@ -25,6 +21,7 @@ class RdmaEndpoint {
     void Poll();
 
    protected:
+    const size_t kZmqMessageBufferSize = 1024;
     uint8_t ib_dev_port_;
     struct ibv_port_attr ib_dev_port_info_ = {};
     struct ibv_context *ctx_;
@@ -32,13 +29,15 @@ class RdmaEndpoint {
     struct ibv_cq *cq_;
     struct ibv_qp *qp_;
     struct ibv_mr *mr_;
-    uint8_t *buf_;
-    size_t buf_size_;
-    struct QpPublishInfo local_qp_info_;
+    uint8_t *buf_;             // Buffer associated with local memory region
+    size_t buf_size_;          // Size of the buffer associated with local memory region
+    RdmaPeerInfo local_info_;  // Local information to share with remote peers
+    std::vector<RdmaPeerInfo> remote_info_;
 
+    void PopulateLocalInfo();
     struct ibv_qp *PrepareQueuePair(uint32_t max_send_count, uint32_t max_recv_count,
                                     ibv_qp_type qp_type);
-    void ConnectQueuePair(ibv_qp *qp, QpPublishInfo remote_qp_info);
+    void ConnectQueuePair(ibv_qp *qp, RdmaPeerQueuePairInfo remote_qp_info);
 
    private:
     struct ibv_context *GetIbContextFromDevice(const char *device_name, const uint8_t port);

@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+message RdmaPeerQueuePairInfo {
+  // Queue Pair Number
+  uint32 queue_pair_number = 1;
+  // Packet Serial Number
+  uint32 packet_serial_number = 2;
+  // Local identifier of InfiniBand port
+  uint32 local_identifier = 3;
+}
+
+message RdmaPeerMemoryRegionInfo {
+  // Base address
+  fixed64 address = 1;
+  // Remote key
+  fixed32 remote_key = 2;
+  // Buffer size
+  uint64 size = 3;
+}
+
+message RdmaPeerInfo {
+  // Queue pair information
+  RdmaPeerQueuePairInfo queue_pair = 1;
+  // Memory regions associated with the same protected domain as queue pair
+  repeated RdmaPeerMemoryRegionInfo memory_regions = 2;
+}
