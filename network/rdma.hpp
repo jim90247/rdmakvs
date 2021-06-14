@@ -16,14 +16,16 @@ class RdmaEndpoint {
                  uint32_t max_send_count, uint32_t max_recv_count, ibv_qp_type qp_type,
                  uint64_t wr_offset, uint64_t wr_count);
     ~RdmaEndpoint();
-    void Write(void *addr);
-    void Read(void *addr);
+    uint64_t Write(size_t remote_id, uint64_t local_offset, uint64_t remote_offset, uint32_t length,
+                   unsigned int flags = IBV_SEND_SIGNALED, ibv_send_wr **bad_wr = nullptr);
+    uint64_t Read(size_t remote_id, uint64_t local_offset, uint64_t remote_offset, uint32_t length,
+                  unsigned int flags = IBV_SEND_SIGNALED, ibv_send_wr **bad_wr = nullptr);
     uint64_t Send(uint64_t offset, uint32_t length, unsigned int flags = IBV_SEND_SIGNALED,
                   ibv_send_wr **bad_wr = nullptr);
     uint64_t Recv(uint64_t offset, uint32_t length, ibv_recv_wr **bad_wr = nullptr);
     void CompareAndSwap(void *addr);
-    void PollCompletionQueue(std::unordered_set<uint64_t> &completed_wr, bool poll_until_found,
-                             uint64_t wr_id);
+    void WaitForCompletion(std::unordered_set<uint64_t> &completed_wr, bool poll_until_found,
+                           uint64_t target_wr_id);
 
    protected:
     uint8_t ib_dev_port_;
@@ -42,6 +44,7 @@ class RdmaEndpoint {
     void *zmq_socket_;
     RdmaPeerInfo local_info_;  // Local information to share with remote peers
     std::vector<RdmaPeerInfo> remote_info_;
+
     void PopulateLocalInfo();
     size_t ExchangePeerInfo(void *zmq_socket, bool send_first);
 
@@ -50,11 +53,11 @@ class RdmaEndpoint {
     void ConnectQueuePair(ibv_qp *qp, RdmaPeerQueuePairInfo remote_qp_info);
 
    private:
-    struct ibv_context *GetIbContextFromDevice(const char *device_name, const uint8_t port);
     const uint64_t kWorkRequestIdOffset;
     const uint64_t kWorkRequestIdRegionSize;
     uint64_t next_wr_id_;
 
+    struct ibv_context *GetIbContextFromDevice(const char *device_name, const uint8_t port);
     uint64_t IncrementWorkRequestId();
 };
 

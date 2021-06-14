@@ -190,7 +190,7 @@ size_t RdmaEndpoint::ExchangePeerInfo(void *zmq_socket, bool send_first) {
     remote_info.ParseFromString(remote_info_cstr);
     remote_info_.push_back(remote_info);
 
-    LOG(INFO) << "Remote peer" << remote_info_.size()
+    LOG(INFO) << "Remote peer " << remote_info_.size() - 1
               << " information: " << remote_info.ShortDebugString();
 
     return remote_info_.size() - 1;
@@ -231,13 +231,78 @@ void RdmaEndpoint::ConnectQueuePair(ibv_qp *qp, RdmaPeerQueuePairInfo remote_qp_
         << "Failed to modify queue pair to RTS";
 }
 
-void RdmaEndpoint::Write(void *addr) {}
-void RdmaEndpoint::Read(void *addr) {}
+uint64_t RdmaEndpoint::Write(size_t remote_id, uint64_t local_offset, uint64_t remote_offset,
+                             uint32_t length, unsigned int flags, ibv_send_wr **bad_wr) {
+    CHECK(remote_id < remote_info_.size()) << "Remote id " << remote_id << " out of bound";
+    struct ibv_sge sg = {
+        .addr = reinterpret_cast<uint64_t>(buf_) + local_offset,
+        .length = length,
+        .lkey = mr_->lkey,
+    };
+
+    struct ibv_send_wr *local_bad_wr,
+        wr = {
+            .wr_id = IncrementWorkRequestId(),
+            .next = nullptr,
+            .sg_list = &sg,
+            .num_sge = 1,
+            .opcode = IBV_WR_RDMA_WRITE,
+            .send_flags = flags,
+            .wr =
+                {
+                    .rdma =
+                        {
+                            .remote_addr =
+                                remote_info_[remote_id].memory_regions(0).address() + remote_offset,
+                            .rkey = remote_info_[remote_id].memory_regions(0).remote_key(),
+                        },
+                },
+        };
+    int rc = ibv_post_send(qp_, &wr, bad_wr == nullptr ? &local_bad_wr : bad_wr);
+
+    LOG_IF(ERROR, rc != 0) << "Error posting IBV_WR_RDMA_WRITE work request: " << strerror(rc);
+
+    return wr.wr_id;
+}
+
+uint64_t RdmaEndpoint::Read(size_t remote_id, uint64_t local_offset, uint64_t remote_offset,
+                            uint32_t length, unsigned int flags, ibv_send_wr **bad_wr) {
+    CHECK(remote_id < remote_info_.size()) << "Remote id " << remote_id << " out of bound";
+    struct ibv_sge sg = {
+        .addr = reinterpret_cast<uint64_t>(buf_) + local_offset,
+        .length = length,
+        .lkey = mr_->lkey,
+    };
+
+    struct ibv_send_wr *local_bad_wr,
+        wr = {
+            .wr_id = IncrementWorkRequestId(),
+            .next = nullptr,
+            .sg_list = &sg,
+            .num_sge = 1,
+            .opcode = IBV_WR_RDMA_READ,
+            .send_flags = flags,
+            .wr =
+                {
+                    .rdma =
+                        {
+                            .remote_addr =
+                                remote_info_[remote_id].memory_regions(0).address() + remote_offset,
+                            .rkey = remote_info_[remote_id].memory_regions(0).remote_key(),
+                        },
+                },
+        };
+    int rc = ibv_post_send(qp_, &wr, bad_wr == nullptr ? &local_bad_wr : bad_wr);
+
+    LOG_IF(ERROR, rc != 0) << "Error posting IBV_WR_RDMA_WRITE work request: " << strerror(rc);
+
+    return wr.wr_id;
+}
 
 uint64_t RdmaEndpoint::Send(uint64_t offset, uint32_t length, unsigned int flags,
                             ibv_send_wr **bad_wr) {
     struct ibv_sge sg = {
-        .addr = reinterpret_cast<uint64_t>(mr_->addr) + offset,
+        .addr = reinterpret_cast<uint64_t>(buf_) + offset,
         .length = length,
         .lkey = mr_->lkey,
     };
@@ -260,7 +325,7 @@ uint64_t RdmaEndpoint::Send(uint64_t offset, uint32_t length, unsigned int flags
 
 uint64_t RdmaEndpoint::Recv(uint64_t offset, uint32_t length, ibv_recv_wr **bad_wr) {
     struct ibv_sge sg = {
-        .addr = reinterpret_cast<uint64_t>(mr_->addr) + offset,
+        .addr = reinterpret_cast<uint64_t>(buf_) + offset,
         .length = length,
         .lkey = mr_->lkey,
     };
@@ -281,8 +346,11 @@ uint64_t RdmaEndpoint::Recv(uint64_t offset, uint32_t length, ibv_recv_wr **bad_
 
 void RdmaEndpoint::CompareAndSwap(void *addr) {}
 
-void RdmaEndpoint::PollCompletionQueue(std::unordered_set<uint64_t> &completed_wr,
-                                       bool poll_until_found, uint64_t wr_id) {
+void RdmaEndpoint::WaitForCompletion(std::unordered_set<uint64_t> &completed_wr,
+                                     bool poll_until_found, uint64_t target_wr_id) {
+    // Early exit if target work request already completed
+    if (poll_until_found && completed_wr.find(target_wr_id) != completed_wr.end()) return;
+
     const int kBatch = 32;
     struct ibv_wc wc_list[kBatch];
     int n = 0;
@@ -297,7 +365,7 @@ void RdmaEndpoint::PollCompletionQueue(std::unordered_set<uint64_t> &completed_w
                 << " completed with error: " << ibv_wc_status_str(wc_list[i].status);
             completed_wr.insert(wc_list[i].wr_id);
         }
-    } while (n == 0 || (poll_until_found && completed_wr.find(wr_id) == completed_wr.end()));
+    } while (n == 0 || (poll_until_found && completed_wr.find(target_wr_id) == completed_wr.end()));
 }
 
 uint64_t RdmaEndpoint::IncrementWorkRequestId() {
