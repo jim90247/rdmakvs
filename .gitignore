@@ -1,0 +1,6 @@
+*.pb.cc
+*.pb.h
+
+.vscode/
+
+compile_flags.txt
