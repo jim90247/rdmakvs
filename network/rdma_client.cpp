@@ -18,7 +18,8 @@ RdmaClient::~RdmaClient() {
 }
 
 void RdmaClient::Connect(const char *endpoint) {
-    CHECK(zmq_connect(zmq_socket_, endpoint) == 0) << "Failed to connect " << endpoint;
+    CHECK_EQ(zmq_connect(zmq_socket_, endpoint), 0)
+        << "Failed to connect " << endpoint << ": " << zmq_strerror(zmq_errno());
 
     size_t remote_id = ExchangePeerInfo(zmq_socket_, true);
 

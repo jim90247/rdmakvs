@@ -18,7 +18,8 @@ RdmaServer::~RdmaServer() {
 }
 
 void RdmaServer::Listen(const char *endpoint) {
-    CHECK(zmq_bind(zmq_socket_, endpoint) == 0) << "Failed to bind " << endpoint;
+    CHECK_EQ(zmq_bind(zmq_socket_, endpoint), 0)
+        << "Failed to bind " << endpoint << ": " << zmq_strerror(zmq_errno());
 
     size_t remote_id = ExchangePeerInfo(zmq_socket_, false);
 

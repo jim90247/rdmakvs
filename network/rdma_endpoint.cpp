@@ -34,7 +34,7 @@ RdmaEndpoint::RdmaEndpoint(char *ib_dev_name, uint8_t ib_dev_port, char *buffer,
     pd_ = ibv_alloc_pd(ctx_);
     CHECK(pd_ != nullptr) << "Failed to allocate protected domain";
 
-    CHECK(ibv_query_port(ctx_, ib_dev_port_, &ib_dev_port_info_) == 0)
+    CHECK_EQ(ibv_query_port(ctx_, ib_dev_port_, &ib_dev_port_info_), 0)
         << "Failed to query port " << ib_dev_port_ << " (" << ib_dev_name << ")";
 
     mr_ = ibv_reg_mr(pd_, buf_, buf_size_,
@@ -168,8 +168,9 @@ struct ibv_qp *RdmaEndpoint::PrepareQueuePair(uint32_t max_send_count, uint32_t 
         .port_num = ib_dev_port_,
     };
 
-    CHECK(ibv_modify_qp(qp, &qp_attr,
-                        IBV_QP_STATE | IBV_QP_PKEY_INDEX | IBV_QP_PORT | IBV_QP_ACCESS_FLAGS) == 0)
+    CHECK_EQ(ibv_modify_qp(qp, &qp_attr,
+                           IBV_QP_STATE | IBV_QP_PKEY_INDEX | IBV_QP_PORT | IBV_QP_ACCESS_FLAGS),
+             0)
         << "Failed to modify queue pair to INIT";
     return qp;
 }
@@ -214,9 +215,10 @@ void RdmaEndpoint::ConnectQueuePair(ibv_qp *qp, RdmaPeerQueuePairInfo remote_qp_
         .min_rnr_timer = 12,
     };
 
-    CHECK(ibv_modify_qp(qp, &qp_attr,
-                        IBV_QP_STATE | IBV_QP_PATH_MTU | IBV_QP_DEST_QPN | IBV_QP_RQ_PSN |
-                            IBV_QP_MAX_DEST_RD_ATOMIC | IBV_QP_MIN_RNR_TIMER | IBV_QP_AV) == 0)
+    CHECK_EQ(ibv_modify_qp(qp, &qp_attr,
+                           IBV_QP_STATE | IBV_QP_PATH_MTU | IBV_QP_DEST_QPN | IBV_QP_RQ_PSN |
+                               IBV_QP_MAX_DEST_RD_ATOMIC | IBV_QP_MIN_RNR_TIMER | IBV_QP_AV),
+             0)
         << "Failed to modify queue pair to RTR";
 
     qp_attr.qp_state = IBV_QPS_RTS;
@@ -225,15 +227,20 @@ void RdmaEndpoint::ConnectQueuePair(ibv_qp *qp, RdmaPeerQueuePairInfo remote_qp_
     qp_attr.rnr_retry = 7;
     qp_attr.sq_psn = local_info_.queue_pair().packet_serial_number();
     qp_attr.max_rd_atomic = 1;
-    CHECK(ibv_modify_qp(qp, &qp_attr,
-                        IBV_QP_STATE | IBV_QP_TIMEOUT | IBV_QP_RETRY_CNT | IBV_QP_RNR_RETRY |
-                            IBV_QP_SQ_PSN | IBV_QP_MAX_QP_RD_ATOMIC) == 0)
+    CHECK_EQ(ibv_modify_qp(qp, &qp_attr,
+                           IBV_QP_STATE | IBV_QP_TIMEOUT | IBV_QP_RETRY_CNT | IBV_QP_RNR_RETRY |
+                               IBV_QP_SQ_PSN | IBV_QP_MAX_QP_RD_ATOMIC),
+             0)
         << "Failed to modify queue pair to RTS";
 }
 
 uint64_t RdmaEndpoint::Write(size_t remote_id, uint64_t local_offset, uint64_t remote_offset,
                              uint32_t length, unsigned int flags, ibv_send_wr **bad_wr) {
-    CHECK(remote_id < remote_info_.size()) << "Remote id " << remote_id << " out of bound";
+    CHECK_LT(remote_id, remote_info_.size()) << "Remote id " << remote_id << " out of bound";
+    CHECK_LT(local_offset + length, buf_size_) << "Local offset " << local_offset << "out of bound";
+    CHECK_LT(remote_offset + length, remote_info_[remote_id].memory_regions(0).size())
+        << "Remote offset " << remote_offset << " out of bound";
+
     struct ibv_sge sg = {
         .addr = reinterpret_cast<uint64_t>(buf_) + local_offset,
         .length = length,
@@ -267,7 +274,11 @@ uint64_t RdmaEndpoint::Write(size_t remote_id, uint64_t local_offset, uint64_t r
 
 uint64_t RdmaEndpoint::Read(size_t remote_id, uint64_t local_offset, uint64_t remote_offset,
                             uint32_t length, unsigned int flags, ibv_send_wr **bad_wr) {
-    CHECK(remote_id < remote_info_.size()) << "Remote id " << remote_id << " out of bound";
+    CHECK_LT(remote_id, remote_info_.size()) << "Remote id " << remote_id << " out of bound";
+    CHECK_LT(local_offset + length, buf_size_) << "Local offset " << local_offset << "out of bound";
+    CHECK_LT(remote_offset + length, remote_info_[remote_id].memory_regions(0).size())
+        << "Remote offset " << remote_offset << " out of bound";
+
     struct ibv_sge sg = {
         .addr = reinterpret_cast<uint64_t>(buf_) + local_offset,
         .length = length,
@@ -357,7 +368,7 @@ void RdmaEndpoint::WaitForCompletion(std::unordered_set<uint64_t> &completed_wr,
     do {
         n = ibv_poll_cq(cq_, kBatch, wc_list);
 
-        CHECK(n >= 0) << "Error polling completion queue " << n;
+        CHECK_GE(n, 0) << "Error polling completion queue " << n;
 
         for (int i = 0; i < n; i++) {
             LOG_IF(ERROR, wc_list[i].status != IBV_WC_SUCCESS)
