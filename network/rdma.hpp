@@ -6,6 +6,7 @@
 #include <zmq.h>
 
 #include <network/common.hpp>
+#include <tuple>
 #include <unordered_set>
 #include <vector>
 
@@ -18,6 +19,9 @@ class RdmaEndpoint {
     ~RdmaEndpoint();
     uint64_t Write(size_t remote_id, uint64_t local_offset, uint64_t remote_offset, uint32_t length,
                    unsigned int flags = IBV_SEND_SIGNALED, ibv_send_wr **bad_wr = nullptr);
+    std::vector<uint64_t> WriteBatch(
+        size_t remote_id, const std::vector<std::tuple<uint64_t, uint64_t, uint32_t>> &requests,
+        unsigned int flags = IBV_SEND_SIGNALED, ibv_send_wr **bad_wr = nullptr);
     uint64_t Read(size_t remote_id, uint64_t local_offset, uint64_t remote_offset, uint32_t length,
                   unsigned int flags = IBV_SEND_SIGNALED, ibv_send_wr **bad_wr = nullptr);
     uint64_t Send(uint64_t offset, uint32_t length, unsigned int flags = IBV_SEND_SIGNALED,
@@ -56,9 +60,16 @@ class RdmaEndpoint {
     const uint64_t kWorkRequestIdOffset;
     const uint64_t kWorkRequestIdRegionSize;
     uint64_t next_wr_id_;
+    int64_t num_wr_in_progress_;
 
     struct ibv_context *GetIbContextFromDevice(const char *device_name, const uint8_t port);
     uint64_t IncrementWorkRequestId();
+
+    const size_t kMaxBatchSize = 32;
+    inline void PopulateWriteWorkRequest(struct ibv_sge *sg, struct ibv_send_wr *wr,
+                                         size_t remote_id, uint64_t local_offset,
+                                         uint64_t remote_offset, uint32_t length,
+                                         struct ibv_send_wr *next, unsigned int flags);
 };
 
 // wait for clients to connect, implement connect and disconnect

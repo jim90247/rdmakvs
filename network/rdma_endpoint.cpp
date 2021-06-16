@@ -19,6 +19,7 @@ RdmaEndpoint::RdmaEndpoint(char *ib_dev_name, uint8_t ib_dev_port, char *buffer,
       buf_(buffer),
       buf_size_(buffer_size),
       next_wr_id_(wr_offset),
+      num_wr_in_progress_(0),
       kWorkRequestIdOffset(wr_offset),
       kWorkRequestIdRegionSize(wr_count),
       zmq_socket_(nullptr) {
@@ -234,6 +235,38 @@ void RdmaEndpoint::ConnectQueuePair(ibv_qp *qp, RdmaPeerQueuePairInfo remote_qp_
         << "Failed to modify queue pair to RTS";
 }
 
+inline void RdmaEndpoint::PopulateWriteWorkRequest(struct ibv_sge *sg, struct ibv_send_wr *wr,
+                                                   size_t remote_id, uint64_t local_offset,
+                                                   uint64_t remote_offset, uint32_t length,
+                                                   struct ibv_send_wr *next, unsigned int flags) {
+    CHECK_NOTNULL(sg);
+    CHECK_NOTNULL(wr);
+
+    *sg = {
+        .addr = reinterpret_cast<uint64_t>(buf_) + local_offset,
+        .length = length,
+        .lkey = mr_->lkey,
+    };
+
+    *wr = {
+        .wr_id = IncrementWorkRequestId(),
+        .next = next,
+        .sg_list = sg,
+        .num_sge = 1,
+        .opcode = IBV_WR_RDMA_WRITE,
+        .send_flags = flags,
+        .wr =
+            {
+                .rdma =
+                    {
+                        .remote_addr =
+                            remote_info_[remote_id].memory_regions(0).address() + remote_offset,
+                        .rkey = remote_info_[remote_id].memory_regions(0).remote_key(),
+                    },
+            },
+    };
+}
+
 uint64_t RdmaEndpoint::Write(size_t remote_id, uint64_t local_offset, uint64_t remote_offset,
                              uint32_t length, unsigned int flags, ibv_send_wr **bad_wr) {
     CHECK_LT(remote_id, remote_info_.size()) << "Remote id " << remote_id << " out of bound";
@@ -241,35 +274,55 @@ uint64_t RdmaEndpoint::Write(size_t remote_id, uint64_t local_offset, uint64_t r
     CHECK_LE(remote_offset + length, remote_info_[remote_id].memory_regions(0).size())
         << "Remote offset " << remote_offset << " out of bound";
 
-    struct ibv_sge sg = {
-        .addr = reinterpret_cast<uint64_t>(buf_) + local_offset,
-        .length = length,
-        .lkey = mr_->lkey,
-    };
+    struct ibv_sge sg;
+    struct ibv_send_wr *local_bad_wr, wr;
 
-    struct ibv_send_wr *local_bad_wr,
-        wr = {
-            .wr_id = IncrementWorkRequestId(),
-            .next = nullptr,
-            .sg_list = &sg,
-            .num_sge = 1,
-            .opcode = IBV_WR_RDMA_WRITE,
-            .send_flags = flags,
-            .wr =
-                {
-                    .rdma =
-                        {
-                            .remote_addr =
-                                remote_info_[remote_id].memory_regions(0).address() + remote_offset,
-                            .rkey = remote_info_[remote_id].memory_regions(0).remote_key(),
-                        },
-                },
-        };
+    PopulateWriteWorkRequest(&sg, &wr, remote_id, local_offset, remote_offset, length, nullptr,
+                             flags);
+
     int rc = ibv_post_send(qp_, &wr, bad_wr == nullptr ? &local_bad_wr : bad_wr);
 
     LOG_IF(ERROR, rc != 0) << "Error posting IBV_WR_RDMA_WRITE work request: " << strerror(rc);
+    if (rc == 0 && (flags & IBV_SEND_SIGNALED)) num_wr_in_progress_ += 1;
 
     return wr.wr_id;
+}
+
+std::vector<uint64_t> RdmaEndpoint::WriteBatch(
+    size_t remote_id, const std::vector<std::tuple<uint64_t, uint64_t, uint32_t>> &requests,
+    unsigned int flags, ibv_send_wr **bad_wr) {
+    CHECK_LT(remote_id, remote_info_.size()) << "Remote id " << remote_id << " out of bound";
+
+    size_t n = requests.size();
+    CHECK_LE(n, kMaxBatchSize) << "Exceed max batch size (" << kMaxBatchSize << ")";
+
+    struct ibv_send_wr *local_bad_wr, wr_list[kMaxBatchSize];
+    struct ibv_sge sg_list[kMaxBatchSize];
+    std::vector<uint64_t> wr_ids(n);
+
+    for (size_t wr_idx = 0; wr_idx < n; wr_idx++) {
+        uint64_t local_offset, remote_offset;
+        uint32_t length;
+        std::tie(local_offset, remote_offset, length) = requests[wr_idx];
+
+        CHECK_LE(local_offset + length, buf_size_)
+            << "Local offset " << local_offset << "out of bound";
+        CHECK_LE(remote_offset + length, remote_info_[remote_id].memory_regions(0).size())
+            << "Remote offset " << remote_offset << " out of bound";
+
+        PopulateWriteWorkRequest(&sg_list[wr_idx], &wr_list[wr_idx], remote_id, local_offset,
+                                 remote_offset, length,
+                                 wr_idx == n - 1 ? nullptr : &wr_list[wr_idx + 1], flags);
+
+        wr_ids[wr_idx] = wr_list[wr_idx].wr_id;
+    }
+
+    int rc = ibv_post_send(qp_, wr_list, bad_wr == nullptr ? &local_bad_wr : bad_wr);
+
+    LOG_IF(ERROR, rc != 0) << "Error posting IBV_WR_RDMA_WRITE work request: " << strerror(rc);
+    if (rc == 0 && (flags & IBV_SEND_SIGNALED)) num_wr_in_progress_ += n;
+
+    return wr_ids;
 }
 
 uint64_t RdmaEndpoint::Read(size_t remote_id, uint64_t local_offset, uint64_t remote_offset,
@@ -306,6 +359,7 @@ uint64_t RdmaEndpoint::Read(size_t remote_id, uint64_t local_offset, uint64_t re
     int rc = ibv_post_send(qp_, &wr, bad_wr == nullptr ? &local_bad_wr : bad_wr);
 
     LOG_IF(ERROR, rc != 0) << "Error posting IBV_WR_RDMA_WRITE work request: " << strerror(rc);
+    if (rc == 0 && (flags & IBV_SEND_SIGNALED)) num_wr_in_progress_ += 1;
 
     return wr.wr_id;
 }
@@ -332,6 +386,7 @@ uint64_t RdmaEndpoint::Send(uint64_t offset, uint32_t length, unsigned int flags
     int rc = ibv_post_send(qp_, &wr, bad_wr == nullptr ? &local_bad_wr : bad_wr);
 
     LOG_IF(ERROR, rc != 0) << "Error posting IBV_WR_SEND work request: " << strerror(rc);
+    if (rc == 0 && (flags & IBV_SEND_SIGNALED)) num_wr_in_progress_ += 1;
 
     return wr.wr_id;
 }
@@ -355,6 +410,7 @@ uint64_t RdmaEndpoint::Recv(uint64_t offset, uint32_t length, ibv_recv_wr **bad_
     int rc = ibv_post_recv(qp_, &wr, bad_wr == nullptr ? &local_bad_wr : bad_wr);
 
     LOG_IF(ERROR, rc != 0) << "Error posting recv wr: " << strerror(rc);
+    if (rc == 0) num_wr_in_progress_ += 1;
 
     return wr.wr_id;
 }
@@ -379,8 +435,11 @@ void RdmaEndpoint::WaitForCompletion(std::unordered_set<uint64_t> &completed_wr,
                 << "Work request " << wc_list[i].wr_id
                 << " completed with error: " << ibv_wc_status_str(wc_list[i].status);
             completed_wr.insert(wc_list[i].wr_id);
+            num_wr_in_progress_--;
         }
-    } while (n == 0 || (poll_until_found && completed_wr.find(target_wr_id) == completed_wr.end()));
+    } while (
+        num_wr_in_progress_ > 0 &&
+        (n == 0 || (poll_until_found && completed_wr.find(target_wr_id) == completed_wr.end())));
 }
 
 uint64_t RdmaEndpoint::IncrementWorkRequestId() {
