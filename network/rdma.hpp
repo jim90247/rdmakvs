@@ -10,6 +10,12 @@
 #include <unordered_set>
 #include <vector>
 
+enum class SignalStrategy {
+    kSignalNone = 0,
+    kSignalLast,
+    kSignalAll,
+};
+
 // base class for any rdma service. establish ibv context, queue pair, etc.
 class RdmaEndpoint {
    public:
@@ -21,7 +27,7 @@ class RdmaEndpoint {
                    unsigned int flags = IBV_SEND_SIGNALED, ibv_send_wr **bad_wr = nullptr);
     std::vector<uint64_t> WriteBatch(
         size_t remote_id, const std::vector<std::tuple<uint64_t, uint64_t, uint32_t>> &requests,
-        unsigned int flags = IBV_SEND_SIGNALED, ibv_send_wr **bad_wr = nullptr);
+        SignalStrategy signal_strategy, unsigned int flags = 0, ibv_send_wr **bad_wr = nullptr);
     uint64_t Read(size_t remote_id, uint64_t local_offset, uint64_t remote_offset, uint32_t length,
                   unsigned int flags = IBV_SEND_SIGNALED, ibv_send_wr **bad_wr = nullptr);
     uint64_t Send(uint64_t offset, uint32_t length, unsigned int flags = IBV_SEND_SIGNALED,

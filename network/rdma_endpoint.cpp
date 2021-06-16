@@ -290,7 +290,7 @@ uint64_t RdmaEndpoint::Write(size_t remote_id, uint64_t local_offset, uint64_t r
 
 std::vector<uint64_t> RdmaEndpoint::WriteBatch(
     size_t remote_id, const std::vector<std::tuple<uint64_t, uint64_t, uint32_t>> &requests,
-    unsigned int flags, ibv_send_wr **bad_wr) {
+    SignalStrategy signal_strategy, unsigned int flags, ibv_send_wr **bad_wr) {
     CHECK_LT(remote_id, remote_info_.size()) << "Remote id " << remote_id << " out of bound";
 
     size_t n = requests.size();
@@ -298,7 +298,17 @@ std::vector<uint64_t> RdmaEndpoint::WriteBatch(
 
     struct ibv_send_wr *local_bad_wr, wr_list[kMaxBatchSize];
     struct ibv_sge sg_list[kMaxBatchSize];
-    std::vector<uint64_t> wr_ids(n);
+    std::vector<uint64_t> wr_ids;
+
+    switch (signal_strategy) {
+        case SignalStrategy::kSignalNone:
+        case SignalStrategy::kSignalLast:
+            flags &= ~IBV_SEND_SIGNALED;
+            break;
+        case SignalStrategy::kSignalAll:
+            flags |= IBV_SEND_SIGNALED;
+            break;
+    }
 
     for (size_t wr_idx = 0; wr_idx < n; wr_idx++) {
         uint64_t local_offset, remote_offset;
@@ -310,17 +320,32 @@ std::vector<uint64_t> RdmaEndpoint::WriteBatch(
         CHECK_LE(remote_offset + length, remote_info_[remote_id].memory_regions(0).size())
             << "Remote offset " << remote_offset << " out of bound";
 
+        if (wr_idx == n - 1 && signal_strategy == SignalStrategy::kSignalLast)
+            flags |= IBV_SEND_SIGNALED;
+
         PopulateWriteWorkRequest(&sg_list[wr_idx], &wr_list[wr_idx], remote_id, local_offset,
                                  remote_offset, length,
                                  wr_idx == n - 1 ? nullptr : &wr_list[wr_idx + 1], flags);
-
-        wr_ids[wr_idx] = wr_list[wr_idx].wr_id;
     }
 
     int rc = ibv_post_send(qp_, wr_list, bad_wr == nullptr ? &local_bad_wr : bad_wr);
 
     LOG_IF(ERROR, rc != 0) << "Error posting IBV_WR_RDMA_WRITE work request: " << strerror(rc);
-    if (rc == 0 && (flags & IBV_SEND_SIGNALED)) num_wr_in_progress_ += n;
+
+    if (rc == 0) {
+        switch (signal_strategy) {
+            case SignalStrategy::kSignalLast:
+                num_wr_in_progress_ += 1;
+                wr_ids.push_back(wr_list[n - 1].wr_id);
+                break;
+            case SignalStrategy::kSignalAll:
+                num_wr_in_progress_ += n;
+                for (auto wr : wr_list) wr_ids.push_back(wr.wr_id);
+                break;
+            default:
+                break;
+        }
+    }
 
     return wr_ids;
 }
