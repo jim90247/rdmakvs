@@ -444,7 +444,7 @@ void RdmaEndpoint::WaitForCompletion(std::unordered_set<uint64_t> &completed_wr,
 
 uint64_t RdmaEndpoint::IncrementWorkRequestId() {
     uint64_t current = next_wr_id_;
-    next_wr_id_ = (next_wr_id_ + 1 - kWorkRequestIdOffset) % kWorkRequestIdRegionSize +
-                  kWorkRequestIdRegionSize;
+    next_wr_id_ =
+        (next_wr_id_ + 1 - kWorkRequestIdOffset) % kWorkRequestIdRegionSize + kWorkRequestIdOffset;
     return current;
 }
