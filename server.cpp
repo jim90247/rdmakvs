@@ -18,8 +18,7 @@ int main(int argc, char **argv) {
     char *buffer = new char[buffer_size]();
     sprintf(buffer + 100, "this is server");
 
-    RdmaServer *endpoint =
-        new RdmaServer(nullptr, 0, buffer, buffer_size, 128, 128, IBV_QPT_RC, 0, 1 << 30);
+    RdmaServer *endpoint = new RdmaServer(nullptr, 0, buffer, buffer_size, 128, 128, IBV_QPT_RC);
     endpoint->Listen("tcp://192.168.223.1:7889");
 
     uint64_t wr_id, wr_id2;
@@ -81,70 +80,69 @@ int main(int argc, char **argv) {
         endpoint->WaitForCompletion(completed_wr, true, wr_id);
     */
     // Single write benchmark
+    /*
+        LOG(INFO) << "Simple write benchmark";
 
-    LOG(INFO) << "Simple write benchmark";
+        auto start = std::chrono::steady_clock::now();
 
-    auto start = std::chrono::steady_clock::now();
-
-    endpoint->InitializeFastWrite(0, 1);
-    for (size_t offset = 0, i = 0; offset < buffer_size; offset += message_size, i++) {
-        if (i % 64 == 0) {
-            if (i > 0) endpoint->WaitForCompletion(completed_wr, true, wr_id);
-            wr_id = endpoint->Write(true, 0, offset, offset, message_size,
-                                    IBV_SEND_SIGNALED | IBV_SEND_INLINE);
-        } else {
-            endpoint->Write(true, 0, offset, offset, message_size, IBV_SEND_INLINE);
+        endpoint->InitializeFastWrite(0, 1);
+        for (size_t offset = 0, i = 0; offset < buffer_size; offset += message_size, i++) {
+            if (i % 64 == 0) {
+                if (i > 0) endpoint->WaitForCompletion(completed_wr, true, wr_id);
+                wr_id = endpoint->Write(true, 0, offset, offset, message_size,
+                                        IBV_SEND_SIGNALED | IBV_SEND_INLINE);
+            } else {
+                endpoint->Write(true, 0, offset, offset, message_size, IBV_SEND_INLINE);
+            }
         }
-    }
-    endpoint->WaitForCompletion(completed_wr, true, wr_id);
+        endpoint->WaitForCompletion(completed_wr, true, wr_id);
 
-    auto end = std::chrono::steady_clock::now();
+        auto end = std::chrono::steady_clock::now();
 
-    LOG(INFO) << buffer_size / message_size << " requests of size " << message_size
-              << " bytes completed in "
-              << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count()
-              << " ms";
-    LOG(INFO) << "IOPS: "
-              << static_cast<double>(buffer_size / message_size) /
-                     std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() *
-                     1000;
-
+        LOG(INFO) << buffer_size / message_size << " requests of size " << message_size
+                  << " bytes completed in "
+                  << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count()
+                  << " ms";
+        LOG(INFO) << "IOPS: "
+                  << static_cast<double>(buffer_size / message_size) /
+                         std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count()
+       * 1000;
+    */
     // Tuple batch write benchmark
+    /*
+        auto start_tuple = std::chrono::steady_clock::now();
 
-    auto start_tuple = std::chrono::steady_clock::now();
-
-    for (int b = 0; (b + 1) * kBatchSize * message_size <= buffer_size; b++) {
-        size_t offset = kBatchSize * b * message_size;
-        for (int i = 0; i < kBatchSize; i++, offset += message_size) {
-            batch[i] = std::make_tuple(offset, offset, message_size);
+        for (int b = 0; (b + 1) * kBatchSize * message_size <= buffer_size; b++) {
+            size_t offset = kBatchSize * b * message_size;
+            for (int i = 0; i < kBatchSize; i++, offset += message_size) {
+                batch[i] = std::make_tuple(offset, offset, message_size);
+            }
+            if (b % (64 / kBatchSize) == 0) {
+                if (b > 0) endpoint->WaitForCompletion(completed_wr, true, wr_id);
+                wr_id =
+                    endpoint->WriteBatch(false, 0, batch, SignalStrategy::kSignalLast,
+       IBV_SEND_INLINE) .back(); } else { endpoint->WriteBatch(false, 0, batch,
+       SignalStrategy::kSignalNone, IBV_SEND_INLINE);
+            }
         }
-        if (b % (64 / kBatchSize) == 0) {
-            if (b > 0) endpoint->WaitForCompletion(completed_wr, true, wr_id);
-            wr_id =
-                endpoint->WriteBatch(false, 0, batch, SignalStrategy::kSignalLast, IBV_SEND_INLINE)
-                    .back();
-        } else {
-            endpoint->WriteBatch(false, 0, batch, SignalStrategy::kSignalNone, IBV_SEND_INLINE);
-        }
-    }
-    endpoint->WaitForCompletion(completed_wr, true, wr_id);
+        endpoint->WaitForCompletion(completed_wr, true, wr_id);
 
-    auto end_tuple = std::chrono::steady_clock::now();
+        auto end_tuple = std::chrono::steady_clock::now();
 
-    LOG(INFO)
-        << buffer_size / message_size << " requests of size " << message_size
-        << " bytes completed in "
-        << std::chrono::duration_cast<std::chrono::milliseconds>(end_tuple - start_tuple).count()
-        << " ms (batch size " << kBatchSize << ")";
-    LOG(INFO) << "IOPS: "
-              << static_cast<double>(buffer_size / message_size) /
-                     std::chrono::duration_cast<std::chrono::milliseconds>(end_tuple - start_tuple)
-                         .count() *
-                     1000;
-
+        LOG(INFO)
+            << buffer_size / message_size << " requests of size " << message_size
+            << " bytes completed in "
+            << std::chrono::duration_cast<std::chrono::milliseconds>(end_tuple -
+       start_tuple).count()
+            << " ms (batch size " << kBatchSize << ")";
+        LOG(INFO) << "IOPS: "
+                  << static_cast<double>(buffer_size / message_size) /
+                         std::chrono::duration_cast<std::chrono::milliseconds>(end_tuple -
+       start_tuple) .count() * 1000;
+    */
     // Fast tuple batch write benchmark
 
-    start_tuple = std::chrono::steady_clock::now();
+    auto start_tuple2 = std::chrono::steady_clock::now();
 
     endpoint->InitializeFastWrite(0, kBatchSize);
     for (int b = 0; (b + 1) * kBatchSize * message_size <= buffer_size; b++) {
@@ -163,16 +161,17 @@ int main(int argc, char **argv) {
     }
     endpoint->WaitForCompletion(completed_wr, true, wr_id);
 
-    end_tuple = std::chrono::steady_clock::now();
+    auto end_tuple2 = std::chrono::steady_clock::now();
 
     LOG(INFO)
         << buffer_size / message_size << " requests of size " << message_size
         << " bytes completed in "
-        << std::chrono::duration_cast<std::chrono::milliseconds>(end_tuple - start_tuple).count()
+        << std::chrono::duration_cast<std::chrono::milliseconds>(end_tuple2 - start_tuple2).count()
         << " ms (batch size " << kBatchSize << ")";
     LOG(INFO) << "IOPS: "
               << static_cast<double>(buffer_size / message_size) /
-                     std::chrono::duration_cast<std::chrono::milliseconds>(end_tuple - start_tuple)
+                     std::chrono::duration_cast<std::chrono::milliseconds>(end_tuple2 -
+                                                                           start_tuple2)
                          .count() *
                      1000;
 

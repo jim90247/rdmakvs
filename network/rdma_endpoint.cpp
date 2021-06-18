@@ -13,15 +13,12 @@
 #include <string>
 
 RdmaEndpoint::RdmaEndpoint(char *ib_dev_name, uint8_t ib_dev_port, char *buffer, size_t buffer_size,
-                           uint32_t max_send_count, uint32_t max_recv_count, ibv_qp_type qp_type,
-                           uint64_t wr_offset, uint64_t wr_count)
+                           uint32_t max_send_count, uint32_t max_recv_count, ibv_qp_type qp_type)
     : ib_dev_port_(ib_dev_port),
       buf_(buffer),
       buf_size_(buffer_size),
-      next_wr_id_(wr_offset),
+      next_wr_id_(0),
       num_wr_in_progress_(0),
-      kWorkRequestIdOffset(wr_offset),
-      kWorkRequestIdRegionSize(wr_count),
       zmq_socket_(nullptr) {
     CHECK(buf_ != nullptr) << "Provided buffer pointer is a nullptr";
 
@@ -271,7 +268,7 @@ void RdmaEndpoint::FillOutWriteWorkRequest(
         sg[i].length = length;
         sg[i].addr = reinterpret_cast<uint64_t>(buf_) + local_offset;
 
-        wr[i].wr_id = IncrementWorkRequestId();
+        wr[i].wr_id = next_wr_id_++;
         wr[i].send_flags = flags;
         wr[i].wr.rdma.remote_addr =
             remote_info_[remote_id].memory_regions(0).address() + remote_offset;
@@ -374,7 +371,7 @@ uint64_t RdmaEndpoint::Read(size_t remote_id, uint64_t local_offset, uint64_t re
 
     struct ibv_send_wr *local_bad_wr,
         wr = {
-            .wr_id = IncrementWorkRequestId(),
+            .wr_id = next_wr_id_++,
             .next = nullptr,
             .sg_list = &sg,
             .num_sge = 1,
@@ -409,7 +406,7 @@ uint64_t RdmaEndpoint::Send(uint64_t offset, uint32_t length, unsigned int flags
     };
 
     struct ibv_send_wr *local_bad_wr, wr = {
-                                          .wr_id = IncrementWorkRequestId(),
+                                          .wr_id = next_wr_id_++,
                                           .next = nullptr,
                                           .sg_list = &sg,
                                           .num_sge = 1,
@@ -435,7 +432,7 @@ uint64_t RdmaEndpoint::Recv(uint64_t offset, uint32_t length, ibv_recv_wr **bad_
     };
 
     struct ibv_recv_wr *local_bad_wr, wr = {
-                                          .wr_id = IncrementWorkRequestId(),
+                                          .wr_id = next_wr_id_++,
                                           .next = nullptr,
                                           .sg_list = &sg,
                                           .num_sge = 1,
@@ -474,11 +471,4 @@ void RdmaEndpoint::WaitForCompletion(std::unordered_set<uint64_t> &completed_wr,
     } while (
         num_wr_in_progress_ > 0 &&
         (n == 0 || (poll_until_found && completed_wr.find(target_wr_id) == completed_wr.end())));
-}
-
-uint64_t RdmaEndpoint::IncrementWorkRequestId() {
-    uint64_t current = next_wr_id_;
-    next_wr_id_ =
-        (next_wr_id_ + 1 - kWorkRequestIdOffset) % kWorkRequestIdRegionSize + kWorkRequestIdOffset;
-    return current;
 }

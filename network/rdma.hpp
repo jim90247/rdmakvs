@@ -20,8 +20,7 @@ enum class SignalStrategy {
 class RdmaEndpoint {
    public:
     RdmaEndpoint(char *ib_dev_name, uint8_t ib_dev_port, char *buffer, size_t buffer_size,
-                 uint32_t max_send_count, uint32_t max_recv_count, ibv_qp_type qp_type,
-                 uint64_t wr_offset, uint64_t wr_count);
+                 uint32_t max_send_count, uint32_t max_recv_count, ibv_qp_type qp_type);
     ~RdmaEndpoint();
     uint64_t Write(bool initialized, size_t remote_id, uint64_t local_offset,
                    uint64_t remote_offset, uint32_t length, unsigned int flags = IBV_SEND_SIGNALED,
@@ -66,13 +65,10 @@ class RdmaEndpoint {
     void ConnectQueuePair(ibv_qp *qp, RdmaPeerQueuePairInfo remote_qp_info);
 
    private:
-    const uint64_t kWorkRequestIdOffset;
-    const uint64_t kWorkRequestIdRegionSize;
     uint64_t next_wr_id_;
     int64_t num_wr_in_progress_;
 
     struct ibv_context *GetIbContextFromDevice(const char *device_name, const uint8_t port);
-    uint64_t IncrementWorkRequestId();
 
     const static size_t kMaxBatchSize = 32;
     struct ibv_send_wr send_wr_template_[kMaxBatchSize];
@@ -90,8 +86,7 @@ class RdmaEndpoint {
 class RdmaServer : public Server, public RdmaEndpoint {
    public:
     RdmaServer(char *ib_dev_name, uint8_t ib_dev_port, char *buffer, size_t buffer_size,
-               uint32_t max_send_count, uint32_t max_recv_count, ibv_qp_type qp_type,
-               uint64_t wr_offset, uint64_t wr_count);
+               uint32_t max_send_count, uint32_t max_recv_count, ibv_qp_type qp_type);
     ~RdmaServer();
     virtual void Listen(const char *endpoint);
 };
@@ -100,8 +95,7 @@ class RdmaServer : public Server, public RdmaEndpoint {
 class RdmaClient : public Client, public RdmaEndpoint {
    public:
     RdmaClient(char *ib_dev_name, uint8_t ib_dev_port, char *buffer, size_t buffer_size,
-               uint32_t max_send_count, uint32_t max_recv_count, ibv_qp_type qp_type,
-               uint64_t wr_offset, uint64_t wr_count);
+               uint32_t max_send_count, uint32_t max_recv_count, ibv_qp_type qp_type);
     ~RdmaClient();
     virtual void Connect(const char *endpoint);
     virtual void Disconnect();
