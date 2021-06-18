@@ -359,9 +359,11 @@ std::vector<uint64_t> RdmaEndpoint::WriteBatch(
 
 uint64_t RdmaEndpoint::Read(size_t remote_id, uint64_t local_offset, uint64_t remote_offset,
                             uint32_t length, unsigned int flags, ibv_send_wr **bad_wr) {
-    CHECK_LT(remote_id, remote_info_.size()) << "Remote id " << remote_id << " out of bound";
-    CHECK_LE(local_offset + length, buf_size_) << "Local offset " << local_offset << "out of bound";
-    CHECK_LE(remote_offset + length, remote_info_[remote_id].memory_regions(0).size())
+    DLOG_IF(FATAL, remote_id >= remote_info_.size())
+        << "Remote id " << remote_id << " out of bound";
+    DLOG_IF(FATAL, local_offset + length > buf_size_)
+        << "Local offset " << local_offset << "out of bound";
+    DLOG_IF(FATAL, remote_offset + length > remote_info_[remote_id].memory_regions(0).size())
         << "Remote offset " << remote_offset << " out of bound";
 
     struct ibv_sge sg = {
@@ -398,7 +400,7 @@ uint64_t RdmaEndpoint::Read(size_t remote_id, uint64_t local_offset, uint64_t re
 
 uint64_t RdmaEndpoint::Send(uint64_t offset, uint32_t length, unsigned int flags,
                             ibv_send_wr **bad_wr) {
-    CHECK_LE(offset + length, buf_size_) << "Local offset " << offset << "out of bound";
+    DLOG_IF(FATAL, offset + length >= buf_size_) << "Local offset " << offset << "out of bound";
 
     struct ibv_sge sg = {
         .addr = reinterpret_cast<uint64_t>(buf_) + offset,
@@ -424,7 +426,7 @@ uint64_t RdmaEndpoint::Send(uint64_t offset, uint32_t length, unsigned int flags
 }
 
 uint64_t RdmaEndpoint::Recv(uint64_t offset, uint32_t length, ibv_recv_wr **bad_wr) {
-    CHECK_LE(offset + length, buf_size_) << "Local offset " << offset << "out of bound";
+    DLOG_IF(FATAL, offset + length >= buf_size_) << "Local offset " << offset << "out of bound";
 
     struct ibv_sge sg = {
         .addr = reinterpret_cast<uint64_t>(buf_) + offset,
@@ -463,7 +465,7 @@ void RdmaEndpoint::WaitForCompletion(std::unordered_set<uint64_t> &completed_wr,
         CHECK_GE(n, 0) << "Error polling completion queue " << n;
 
         for (int i = 0; i < n; i++) {
-            LOG_IF(ERROR, wc_list[i].status != IBV_WC_SUCCESS)
+            DLOG_IF(ERROR, wc_list[i].status != IBV_WC_SUCCESS)
                 << "Work request " << wc_list[i].wr_id
                 << " completed with error: " << ibv_wc_status_str(wc_list[i].status);
             completed_wr.insert(wc_list[i].wr_id);
