@@ -27,10 +27,8 @@ class RdmaEndpoint {
                    unsigned int flags = IBV_SEND_SIGNALED, ibv_send_wr **bad_wr = nullptr);
     void InitFastBatchWrite(size_t remote_id, size_t batch_size);
     std::vector<uint64_t> WriteBatch(
-        size_t remote_id, const std::vector<std::tuple<uint64_t, uint64_t, uint32_t>> &requests,
-        SignalStrategy signal_strategy, unsigned int flags = 0, ibv_send_wr **bad_wr = nullptr);
-    std::vector<uint64_t> WriteBatchFast(
-        size_t remote_id, const std::vector<std::tuple<uint64_t, uint64_t, uint32_t>> &requests,
+        bool pre_inited, size_t remote_id,
+        const std::vector<std::tuple<uint64_t, uint64_t, uint32_t>> &requests,
         SignalStrategy signal_strategy, unsigned int flags = 0, ibv_send_wr **bad_wr = nullptr);
     uint64_t Read(size_t remote_id, uint64_t local_offset, uint64_t remote_offset, uint32_t length,
                   unsigned int flags = IBV_SEND_SIGNALED, ibv_send_wr **bad_wr = nullptr);
@@ -84,8 +82,7 @@ class RdmaEndpoint {
                                          struct ibv_send_wr *next, unsigned int flags);
     inline void FillOutWriteWorkRequest(
         struct ibv_sge *sg, struct ibv_send_wr *wr, size_t remote_id,
-        const std::vector<std::tuple<uint64_t, uint64_t, uint32_t>> &requests,
-        SignalStrategy signal_strategy, unsigned int flags);
+        const std::vector<std::tuple<uint64_t, uint64_t, uint32_t>> &requests, unsigned int flags);
 };
 
 // wait for clients to connect, implement connect and disconnect

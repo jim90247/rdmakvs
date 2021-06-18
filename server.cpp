@@ -120,9 +120,9 @@ int main(int argc, char **argv) {
         if (b % 16 == 0) {
             if (b > 0) endpoint->WaitForCompletion(completed_wr, true, wr_id);
             wr_id =
-                endpoint->WriteBatch(0, batch, SignalStrategy::kSignalLast, IBV_SEND_INLINE).back();
+                endpoint->WriteBatch(false, 0, batch, SignalStrategy::kSignalLast, IBV_SEND_INLINE).back();
         } else {
-            endpoint->WriteBatch(0, batch, SignalStrategy::kSignalNone, IBV_SEND_INLINE);
+            endpoint->WriteBatch(false, 0, batch, SignalStrategy::kSignalNone, IBV_SEND_INLINE);
         }
     }
     endpoint->WaitForCompletion(completed_wr, true, wr_id);
@@ -153,9 +153,9 @@ int main(int argc, char **argv) {
         if (b % 16 == 0) {
             if (b > 0) endpoint->WaitForCompletion(completed_wr, true, wr_id);
             wr_id =
-                endpoint->WriteBatchFast(0, batch, SignalStrategy::kSignalLast, IBV_SEND_INLINE).back();
+                endpoint->WriteBatch(true, 0, batch, SignalStrategy::kSignalLast, IBV_SEND_INLINE).back();
         } else {
-            endpoint->WriteBatchFast(0, batch, SignalStrategy::kSignalNone, IBV_SEND_INLINE);
+            endpoint->WriteBatch(true, 0, batch, SignalStrategy::kSignalNone, IBV_SEND_INLINE);
         }
     }
     endpoint->WaitForCompletion(completed_wr, true, wr_id);
