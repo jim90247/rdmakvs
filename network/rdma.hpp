@@ -25,7 +25,11 @@ class RdmaEndpoint {
     ~RdmaEndpoint();
     uint64_t Write(size_t remote_id, uint64_t local_offset, uint64_t remote_offset, uint32_t length,
                    unsigned int flags = IBV_SEND_SIGNALED, ibv_send_wr **bad_wr = nullptr);
+    void InitFastBatchWrite(size_t remote_id, size_t batch_size);
     std::vector<uint64_t> WriteBatch(
+        size_t remote_id, const std::vector<std::tuple<uint64_t, uint64_t, uint32_t>> &requests,
+        SignalStrategy signal_strategy, unsigned int flags = 0, ibv_send_wr **bad_wr = nullptr);
+    std::vector<uint64_t> WriteBatchFast(
         size_t remote_id, const std::vector<std::tuple<uint64_t, uint64_t, uint32_t>> &requests,
         SignalStrategy signal_strategy, unsigned int flags = 0, ibv_send_wr **bad_wr = nullptr);
     uint64_t Read(size_t remote_id, uint64_t local_offset, uint64_t remote_offset, uint32_t length,
@@ -71,11 +75,17 @@ class RdmaEndpoint {
     struct ibv_context *GetIbContextFromDevice(const char *device_name, const uint8_t port);
     uint64_t IncrementWorkRequestId();
 
-    const size_t kMaxBatchSize = 32;
+    const static size_t kMaxBatchSize = 32;
+    struct ibv_send_wr send_wr_template_[kMaxBatchSize];
+    struct ibv_sge sg_template_[kMaxBatchSize];
     inline void PopulateWriteWorkRequest(struct ibv_sge *sg, struct ibv_send_wr *wr,
                                          size_t remote_id, uint64_t local_offset,
                                          uint64_t remote_offset, uint32_t length,
                                          struct ibv_send_wr *next, unsigned int flags);
+    inline void FillOutWriteWorkRequest(
+        struct ibv_sge *sg, struct ibv_send_wr *wr, size_t remote_id,
+        const std::vector<std::tuple<uint64_t, uint64_t, uint32_t>> &requests,
+        SignalStrategy signal_strategy, unsigned int flags);
 };
 
 // wait for clients to connect, implement connect and disconnect

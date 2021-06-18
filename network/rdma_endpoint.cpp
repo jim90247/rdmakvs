@@ -267,6 +267,63 @@ inline void RdmaEndpoint::PopulateWriteWorkRequest(struct ibv_sge *sg, struct ib
     };
 }
 
+void RdmaEndpoint::InitFastBatchWrite(size_t remote_id, size_t batch_size) {
+    CHECK_LT(remote_id, remote_info_.size()) << "Remote id " << remote_id << " out of bound";
+    CHECK_LE(batch_size, kMaxBatchSize) << "Exceed max batch size (" << kMaxBatchSize << ")";
+
+    for (size_t i = 0; i < batch_size; i++) {
+        sg_template_[i].lkey = mr_->lkey;
+
+        send_wr_template_[i] = {
+            .next = i == batch_size - 1 ? nullptr : &send_wr_template_[i + 1],
+            .sg_list = &sg_template_[i],
+            .num_sge = 1,
+            .opcode = IBV_WR_RDMA_WRITE,
+            .wr = {.rdma = {.rkey = remote_info_[remote_id].memory_regions(0).remote_key()}},
+        };
+    }
+}
+
+void RdmaEndpoint::FillOutWriteWorkRequest(
+    struct ibv_sge *sg, struct ibv_send_wr *wr, size_t remote_id,
+    const std::vector<std::tuple<uint64_t, uint64_t, uint32_t>> &requests,
+    SignalStrategy signal_strategy, unsigned int flags) {
+    int batch_size = requests.size();
+
+    switch (signal_strategy) {
+        case SignalStrategy::kSignalNone:
+        case SignalStrategy::kSignalLast:
+            flags &= ~IBV_SEND_SIGNALED;
+            break;
+        case SignalStrategy::kSignalAll:
+            flags |= IBV_SEND_SIGNALED;
+            break;
+    }
+
+    for (int i = 0; i < batch_size; i++) {
+        uint64_t local_offset, remote_offset;
+        uint32_t length;
+        std::tie(local_offset, remote_offset, length) = requests[i];
+
+        // Use debug logging to reduce performance impact
+        DLOG_IF(FATAL, local_offset + length > buf_size_)
+            << "Local offset " << local_offset << "out of bound";
+        DLOG_IF(FATAL, remote_offset + length > remote_info_[remote_id].memory_regions(0).size())
+            << "Remote offset " << remote_offset << " out of bound";
+
+        sg[i].length = length;
+        sg[i].addr = reinterpret_cast<uint64_t>(buf_) + local_offset;
+
+        if (i == batch_size - 1 && signal_strategy == SignalStrategy::kSignalLast)
+            flags |= IBV_SEND_SIGNALED;
+
+        wr[i].wr_id = IncrementWorkRequestId();
+        wr[i].send_flags = flags;
+        wr[i].wr.rdma.remote_addr =
+            remote_info_[remote_id].memory_regions(0).address() + remote_offset;
+    }
+}
+
 uint64_t RdmaEndpoint::Write(size_t remote_id, uint64_t local_offset, uint64_t remote_offset,
                              uint32_t length, unsigned int flags, ibv_send_wr **bad_wr) {
     CHECK_LT(remote_id, remote_info_.size()) << "Remote id " << remote_id << " out of bound";
@@ -286,6 +343,44 @@ uint64_t RdmaEndpoint::Write(size_t remote_id, uint64_t local_offset, uint64_t r
     if (rc == 0 && (flags & IBV_SEND_SIGNALED)) num_wr_in_progress_ += 1;
 
     return wr.wr_id;
+}
+
+std::vector<uint64_t> RdmaEndpoint::WriteBatchFast(
+    size_t remote_id, const std::vector<std::tuple<uint64_t, uint64_t, uint32_t>> &requests,
+    SignalStrategy signal_strategy, unsigned int flags, ibv_send_wr **bad_wr) {
+    DLOG_IF(FATAL, remote_id >= remote_info_.size())
+        << "Remote id " << remote_id << " out of bound";
+
+    size_t batch_size = requests.size();
+    DLOG_IF(FATAL, batch_size > kMaxBatchSize) << "Exceed max batch size (" << kMaxBatchSize << ")";
+
+    struct ibv_send_wr *local_bad_wr;
+    std::vector<uint64_t> wr_ids;
+
+    // Fill template
+    FillOutWriteWorkRequest(sg_template_, send_wr_template_, remote_id, requests, signal_strategy,
+                            flags);
+
+    int rc = ibv_post_send(qp_, send_wr_template_, bad_wr == nullptr ? &local_bad_wr : bad_wr);
+
+    LOG_IF(ERROR, rc != 0) << "Error posting IBV_WR_RDMA_WRITE work request: " << strerror(rc);
+
+    if (rc == 0) {
+        switch (signal_strategy) {
+            case SignalStrategy::kSignalLast:
+                num_wr_in_progress_ += 1;
+                wr_ids.push_back(send_wr_template_[batch_size - 1].wr_id);
+                break;
+            case SignalStrategy::kSignalAll:
+                num_wr_in_progress_ += batch_size;
+                for (auto wr : send_wr_template_) wr_ids.push_back(wr.wr_id);
+                break;
+            default:
+                break;
+        }
+    }
+
+    return wr_ids;
 }
 
 std::vector<uint64_t> RdmaEndpoint::WriteBatch(
