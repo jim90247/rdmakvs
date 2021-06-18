@@ -23,11 +23,12 @@ class RdmaEndpoint {
                  uint32_t max_send_count, uint32_t max_recv_count, ibv_qp_type qp_type,
                  uint64_t wr_offset, uint64_t wr_count);
     ~RdmaEndpoint();
-    uint64_t Write(size_t remote_id, uint64_t local_offset, uint64_t remote_offset, uint32_t length,
-                   unsigned int flags = IBV_SEND_SIGNALED, ibv_send_wr **bad_wr = nullptr);
-    void InitFastBatchWrite(size_t remote_id, size_t batch_size);
+    uint64_t Write(bool initialized, size_t remote_id, uint64_t local_offset,
+                   uint64_t remote_offset, uint32_t length, unsigned int flags = IBV_SEND_SIGNALED,
+                   ibv_send_wr **bad_wr = nullptr);
+    void InitializeFastWrite(size_t remote_id, size_t batch_size);
     std::vector<uint64_t> WriteBatch(
-        bool pre_inited, size_t remote_id,
+        bool initialized, size_t remote_id,
         const std::vector<std::tuple<uint64_t, uint64_t, uint32_t>> &requests,
         SignalStrategy signal_strategy, unsigned int flags = 0, ibv_send_wr **bad_wr = nullptr);
     uint64_t Read(size_t remote_id, uint64_t local_offset, uint64_t remote_offset, uint32_t length,
