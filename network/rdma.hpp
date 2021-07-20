@@ -16,11 +16,27 @@ enum class SignalStrategy {
     kSignalAll,
 };
 
+const uint8_t kAnyIbPort = 0;
+
 // base class for any rdma service. establish ibv context, queue pair, etc.
 class RdmaEndpoint {
    public:
+    /**
+     * @brief Construct a new Rdma Endpoint object
+     *
+     * @param ib_dev_name Name of the specific IB device to use (e.g. "mlx5_0"). NULL for any
+     * available one.
+     * @param ib_dev_port Specific port number to use. 0 for any available port.
+     * @param buffer Buffer where this endpoint has RDMA access to.
+     * @param buffer_size Size of the buffer.
+     * @param max_send_count Max number of outgoing SEND work requests (including IBV_WR_SEND,
+     * IBV_WR_RDMA_WRITE, ...) at the same time.
+     * @param max_recv_count Max number of outgoing RECV work requests at the same time.
+     * @param qp_type Queue pair type. Default is IBV_QPT_RC.
+     */
     RdmaEndpoint(char *ib_dev_name, uint8_t ib_dev_port, char *buffer, size_t buffer_size,
-                 uint32_t max_send_count, uint32_t max_recv_count, ibv_qp_type qp_type);
+                 uint32_t max_send_count, uint32_t max_recv_count,
+                 ibv_qp_type qp_type = IBV_QPT_RC);
     ~RdmaEndpoint();
     uint64_t Write(bool initialized, size_t remote_id, uint64_t local_offset,
                    uint64_t remote_offset, uint32_t length, unsigned int flags = IBV_SEND_SIGNALED,
