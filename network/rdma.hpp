@@ -45,18 +45,16 @@ class RdmaEndpoint {
                  ibv_qp_type qp_type = IBV_QPT_RC);
     ~RdmaEndpoint();
     uint64_t Write(bool initialized, size_t remote_id, uint64_t local_offset,
-                   uint64_t remote_offset, uint32_t length, unsigned int flags = IBV_SEND_SIGNALED,
-                   ibv_send_wr **bad_wr = nullptr);
+                   uint64_t remote_offset, uint32_t length, unsigned int flags = IBV_SEND_SIGNALED);
     void InitializeFastWrite(size_t remote_id, size_t batch_size);
     std::vector<uint64_t> WriteBatch(
         bool initialized, size_t remote_id,
         const std::vector<std::tuple<uint64_t, uint64_t, uint32_t>> &requests,
-        SignalStrategy signal_strategy, unsigned int flags = 0, ibv_send_wr **bad_wr = nullptr);
+        SignalStrategy signal_strategy, unsigned int flags = 0);
     uint64_t Read(size_t remote_id, uint64_t local_offset, uint64_t remote_offset, uint32_t length,
-                  unsigned int flags = IBV_SEND_SIGNALED, ibv_send_wr **bad_wr = nullptr);
-    uint64_t Send(uint64_t offset, uint32_t length, unsigned int flags = IBV_SEND_SIGNALED,
-                  ibv_send_wr **bad_wr = nullptr);
-    uint64_t Recv(uint64_t offset, uint32_t length, ibv_recv_wr **bad_wr = nullptr);
+                  unsigned int flags = IBV_SEND_SIGNALED);
+    uint64_t Send(uint64_t offset, uint32_t length, unsigned int flags = IBV_SEND_SIGNALED);
+    uint64_t Recv(uint64_t offset, uint32_t length);
     void CompareAndSwap(void *addr);
     void WaitForCompletion(bool poll_until_found, uint64_t target_wr_id);
     void ClearCompletedRecords();

@@ -276,12 +276,11 @@ void RdmaEndpoint::FillOutWriteWorkRequest(
 }
 
 uint64_t RdmaEndpoint::Write(bool initialized, size_t remote_id, uint64_t local_offset,
-                             uint64_t remote_offset, uint32_t length, unsigned int flags,
-                             ibv_send_wr **bad_wr) {
+                             uint64_t remote_offset, uint32_t length, unsigned int flags) {
     DLOG_IF(FATAL, remote_id >= remote_info_.size())
         << "Remote id " << remote_id << " out of bound";
 
-    struct ibv_send_wr *local_bad_wr;
+    struct ibv_send_wr *bad_wr;
 
     if (!initialized) {
         InitializeFastWrite(remote_id, 1);
@@ -290,7 +289,7 @@ uint64_t RdmaEndpoint::Write(bool initialized, size_t remote_id, uint64_t local_
     // Fill template
     FillOutWriteWorkRequest(sg_template_, send_wr_template_, remote_id,
                             {std::make_tuple(local_offset, remote_offset, length)}, flags);
-    int rc = ibv_post_send(qp_, send_wr_template_, bad_wr == nullptr ? &local_bad_wr : bad_wr);
+    int rc = ibv_post_send(qp_, send_wr_template_, &bad_wr);
 
     LOG_IF(ERROR, rc != 0) << "Error posting IBV_WR_RDMA_WRITE work request: " << strerror(rc);
     if (rc == 0 && (flags & IBV_SEND_SIGNALED)) num_wr_in_progress_ += 1;
@@ -301,7 +300,7 @@ uint64_t RdmaEndpoint::Write(bool initialized, size_t remote_id, uint64_t local_
 std::vector<uint64_t> RdmaEndpoint::WriteBatch(
     bool initialized, size_t remote_id,
     const std::vector<std::tuple<uint64_t, uint64_t, uint32_t>> &requests,
-    SignalStrategy signal_strategy, unsigned int flags, ibv_send_wr **bad_wr) {
+    SignalStrategy signal_strategy, unsigned int flags) {
     DLOG_IF(FATAL, remote_id >= remote_info_.size())
         << "Remote id " << remote_id << " out of bound";
 
@@ -312,7 +311,7 @@ std::vector<uint64_t> RdmaEndpoint::WriteBatch(
         InitializeFastWrite(remote_id, batch_size);
     }
 
-    struct ibv_send_wr *local_bad_wr;
+    struct ibv_send_wr *bad_wr;
     std::vector<uint64_t> wr_ids;
 
     switch (signal_strategy) {
@@ -332,7 +331,7 @@ std::vector<uint64_t> RdmaEndpoint::WriteBatch(
         send_wr_template_[batch_size - 1].send_flags |= IBV_SEND_SIGNALED;
     }
 
-    int rc = ibv_post_send(qp_, send_wr_template_, bad_wr == nullptr ? &local_bad_wr : bad_wr);
+    int rc = ibv_post_send(qp_, send_wr_template_, &bad_wr);
 
     LOG_IF(ERROR, rc != 0) << "Error posting IBV_WR_RDMA_WRITE work request: " << strerror(rc);
 
@@ -355,7 +354,7 @@ std::vector<uint64_t> RdmaEndpoint::WriteBatch(
 }
 
 uint64_t RdmaEndpoint::Read(size_t remote_id, uint64_t local_offset, uint64_t remote_offset,
-                            uint32_t length, unsigned int flags, ibv_send_wr **bad_wr) {
+                            uint32_t length, unsigned int flags) {
     DLOG_IF(FATAL, remote_id >= remote_info_.size())
         << "Remote id " << remote_id << " out of bound";
     DLOG_IF(FATAL, local_offset + length > buf_size_)
@@ -369,7 +368,7 @@ uint64_t RdmaEndpoint::Read(size_t remote_id, uint64_t local_offset, uint64_t re
         .lkey = mr_->lkey,
     };
 
-    struct ibv_send_wr *local_bad_wr,
+    struct ibv_send_wr *bad_wr,
         wr = {
             .wr_id = next_wr_id_++,
             .next = nullptr,
@@ -387,7 +386,7 @@ uint64_t RdmaEndpoint::Read(size_t remote_id, uint64_t local_offset, uint64_t re
                         },
                 },
         };
-    int rc = ibv_post_send(qp_, &wr, bad_wr == nullptr ? &local_bad_wr : bad_wr);
+    int rc = ibv_post_send(qp_, &wr, &bad_wr);
 
     LOG_IF(ERROR, rc != 0) << "Error posting IBV_WR_RDMA_WRITE work request: " << strerror(rc);
     if (rc == 0 && (flags & IBV_SEND_SIGNALED)) num_wr_in_progress_ += 1;
@@ -395,8 +394,7 @@ uint64_t RdmaEndpoint::Read(size_t remote_id, uint64_t local_offset, uint64_t re
     return wr.wr_id;
 }
 
-uint64_t RdmaEndpoint::Send(uint64_t offset, uint32_t length, unsigned int flags,
-                            ibv_send_wr **bad_wr) {
+uint64_t RdmaEndpoint::Send(uint64_t offset, uint32_t length, unsigned int flags) {
     DLOG_IF(FATAL, offset + length >= buf_size_) << "Local offset " << offset << "out of bound";
 
     struct ibv_sge sg = {
@@ -405,7 +403,7 @@ uint64_t RdmaEndpoint::Send(uint64_t offset, uint32_t length, unsigned int flags
         .lkey = mr_->lkey,
     };
 
-    struct ibv_send_wr *local_bad_wr, wr = {
+    struct ibv_send_wr *bad_wr, wr = {
                                           .wr_id = next_wr_id_++,
                                           .next = nullptr,
                                           .sg_list = &sg,
@@ -414,7 +412,7 @@ uint64_t RdmaEndpoint::Send(uint64_t offset, uint32_t length, unsigned int flags
                                           .send_flags = flags,
                                       };
 
-    int rc = ibv_post_send(qp_, &wr, bad_wr == nullptr ? &local_bad_wr : bad_wr);
+    int rc = ibv_post_send(qp_, &wr, &bad_wr);
 
     LOG_IF(ERROR, rc != 0) << "Error posting IBV_WR_SEND work request: " << strerror(rc);
     if (rc == 0 && (flags & IBV_SEND_SIGNALED)) num_wr_in_progress_ += 1;
@@ -422,7 +420,7 @@ uint64_t RdmaEndpoint::Send(uint64_t offset, uint32_t length, unsigned int flags
     return wr.wr_id;
 }
 
-uint64_t RdmaEndpoint::Recv(uint64_t offset, uint32_t length, ibv_recv_wr **bad_wr) {
+uint64_t RdmaEndpoint::Recv(uint64_t offset, uint32_t length) {
     DLOG_IF(FATAL, offset + length >= buf_size_) << "Local offset " << offset << "out of bound";
 
     struct ibv_sge sg = {
@@ -431,14 +429,14 @@ uint64_t RdmaEndpoint::Recv(uint64_t offset, uint32_t length, ibv_recv_wr **bad_
         .lkey = mr_->lkey,
     };
 
-    struct ibv_recv_wr *local_bad_wr, wr = {
+    struct ibv_recv_wr *bad_wr, wr = {
                                           .wr_id = next_wr_id_++,
                                           .next = nullptr,
                                           .sg_list = &sg,
                                           .num_sge = 1,
                                       };
 
-    int rc = ibv_post_recv(qp_, &wr, bad_wr == nullptr ? &local_bad_wr : bad_wr);
+    int rc = ibv_post_recv(qp_, &wr, &bad_wr);
 
     LOG_IF(ERROR, rc != 0) << "Error posting recv wr: " << strerror(rc);
     if (rc == 0) num_wr_in_progress_ += 1;
