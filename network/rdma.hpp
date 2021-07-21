@@ -86,7 +86,7 @@ class RdmaEndpoint {
 
    private:
     uint64_t next_wr_id_;
-    int64_t num_wr_in_progress_;
+    int64_t num_signaled_wr_in_progress_;
     std::unordered_set<uint64_t> completed_wr_;
 
     struct ibv_context *GetIbContextFromDevice(const char *device_name, const uint8_t port);

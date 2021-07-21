@@ -18,7 +18,7 @@ RdmaEndpoint::RdmaEndpoint(char *ib_dev_name, uint8_t ib_dev_port, char *buffer,
       buf_(buffer),
       buf_size_(buffer_size),
       next_wr_id_(0),
-      num_wr_in_progress_(0),
+      num_signaled_wr_in_progress_(0),
       zmq_socket_(nullptr) {
     CHECK(buf_ != nullptr) << "Provided buffer pointer is a nullptr";
 
@@ -292,7 +292,7 @@ uint64_t RdmaEndpoint::Write(bool initialized, size_t remote_id, uint64_t local_
     int rc = ibv_post_send(qp_, send_wr_template_, &bad_wr);
 
     LOG_IF(ERROR, rc != 0) << "Error posting IBV_WR_RDMA_WRITE work request: " << strerror(rc);
-    if (rc == 0 && (flags & IBV_SEND_SIGNALED)) num_wr_in_progress_ += 1;
+    if (rc == 0 && (flags & IBV_SEND_SIGNALED)) num_signaled_wr_in_progress_ += 1;
 
     return send_wr_template_[0].wr_id;
 }
@@ -338,11 +338,11 @@ std::vector<uint64_t> RdmaEndpoint::WriteBatch(
     if (rc == 0) {
         switch (signal_strategy) {
             case SignalStrategy::kSignalLast:
-                num_wr_in_progress_ += 1;
+                num_signaled_wr_in_progress_ += 1;
                 wr_ids.push_back(send_wr_template_[batch_size - 1].wr_id);
                 break;
             case SignalStrategy::kSignalAll:
-                num_wr_in_progress_ += batch_size;
+                num_signaled_wr_in_progress_ += batch_size;
                 for (int i = 0; i < batch_size; i++) wr_ids.push_back(send_wr_template_[i].wr_id);
                 break;
             default:
@@ -389,7 +389,7 @@ uint64_t RdmaEndpoint::Read(size_t remote_id, uint64_t local_offset, uint64_t re
     int rc = ibv_post_send(qp_, &wr, &bad_wr);
 
     LOG_IF(ERROR, rc != 0) << "Error posting IBV_WR_RDMA_WRITE work request: " << strerror(rc);
-    if (rc == 0 && (flags & IBV_SEND_SIGNALED)) num_wr_in_progress_ += 1;
+    if (rc == 0 && (flags & IBV_SEND_SIGNALED)) num_signaled_wr_in_progress_ += 1;
 
     return wr.wr_id;
 }
@@ -404,18 +404,18 @@ uint64_t RdmaEndpoint::Send(uint64_t offset, uint32_t length, unsigned int flags
     };
 
     struct ibv_send_wr *bad_wr, wr = {
-                                          .wr_id = next_wr_id_++,
-                                          .next = nullptr,
-                                          .sg_list = &sg,
-                                          .num_sge = 1,
-                                          .opcode = IBV_WR_SEND,
-                                          .send_flags = flags,
-                                      };
+                                    .wr_id = next_wr_id_++,
+                                    .next = nullptr,
+                                    .sg_list = &sg,
+                                    .num_sge = 1,
+                                    .opcode = IBV_WR_SEND,
+                                    .send_flags = flags,
+                                };
 
     int rc = ibv_post_send(qp_, &wr, &bad_wr);
 
     LOG_IF(ERROR, rc != 0) << "Error posting IBV_WR_SEND work request: " << strerror(rc);
-    if (rc == 0 && (flags & IBV_SEND_SIGNALED)) num_wr_in_progress_ += 1;
+    if (rc == 0 && (flags & IBV_SEND_SIGNALED)) num_signaled_wr_in_progress_ += 1;
 
     return wr.wr_id;
 }
@@ -430,16 +430,16 @@ uint64_t RdmaEndpoint::Recv(uint64_t offset, uint32_t length) {
     };
 
     struct ibv_recv_wr *bad_wr, wr = {
-                                          .wr_id = next_wr_id_++,
-                                          .next = nullptr,
-                                          .sg_list = &sg,
-                                          .num_sge = 1,
-                                      };
+                                    .wr_id = next_wr_id_++,
+                                    .next = nullptr,
+                                    .sg_list = &sg,
+                                    .num_sge = 1,
+                                };
 
     int rc = ibv_post_recv(qp_, &wr, &bad_wr);
 
     LOG_IF(ERROR, rc != 0) << "Error posting recv wr: " << strerror(rc);
-    if (rc == 0) num_wr_in_progress_ += 1;
+    if (rc == 0) num_signaled_wr_in_progress_ += 1;
 
     return wr.wr_id;
 }
