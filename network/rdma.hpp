@@ -101,6 +101,7 @@ class RdmaEndpoint {
     inline void FillOutWriteWorkRequest(
         struct ibv_sge *sg, struct ibv_send_wr *wr, size_t remote_id,
         const std::vector<std::tuple<uint64_t, uint64_t, uint32_t>> &requests, unsigned int flags);
+    int PostSendWithAutoReclaim(struct ibv_qp *qp, struct ibv_send_wr *wr);
 };
 
 // wait for clients to connect, implement connect and disconnect

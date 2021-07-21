@@ -4,6 +4,7 @@
 #include <sys/param.h>
 #include <zmq.h>
 
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -275,12 +276,28 @@ void RdmaEndpoint::FillOutWriteWorkRequest(
     }
 }
 
+int RdmaEndpoint::PostSendWithAutoReclaim(struct ibv_qp *qp, struct ibv_send_wr *wr) {
+    struct ibv_send_wr *bad_wr;
+    
+    int rc = ibv_post_send(qp, wr, &bad_wr);
+
+    // Automatic reclaim is not as efficient as manual reclaim.
+    // Whenever possible (hints are available in higher-level application context), try manual
+    // reclaim for better performance.
+    while (rc == ENOMEM) {
+        // Reclaim some completion queue resources
+        WaitForCompletion(false, 0);
+        // Retry from the last failed one
+        rc = ibv_post_send(qp, bad_wr, &bad_wr);
+    }
+
+    return rc;
+}
+
 uint64_t RdmaEndpoint::Write(bool initialized, size_t remote_id, uint64_t local_offset,
                              uint64_t remote_offset, uint32_t length, unsigned int flags) {
     DLOG_IF(FATAL, remote_id >= remote_info_.size())
         << "Remote id " << remote_id << " out of bound";
-
-    struct ibv_send_wr *bad_wr;
 
     if (!initialized) {
         InitializeFastWrite(remote_id, 1);
@@ -289,7 +306,8 @@ uint64_t RdmaEndpoint::Write(bool initialized, size_t remote_id, uint64_t local_
     // Fill template
     FillOutWriteWorkRequest(sg_template_, send_wr_template_, remote_id,
                             {std::make_tuple(local_offset, remote_offset, length)}, flags);
-    int rc = ibv_post_send(qp_, send_wr_template_, &bad_wr);
+    
+    int rc = PostSendWithAutoReclaim(qp_, send_wr_template_);
 
     LOG_IF(ERROR, rc != 0) << "Error posting IBV_WR_RDMA_WRITE work request: " << strerror(rc);
     if (rc == 0 && (flags & IBV_SEND_SIGNALED)) num_signaled_wr_in_progress_ += 1;
@@ -311,7 +329,6 @@ std::vector<uint64_t> RdmaEndpoint::WriteBatch(
         InitializeFastWrite(remote_id, batch_size);
     }
 
-    struct ibv_send_wr *bad_wr;
     std::vector<uint64_t> wr_ids;
 
     switch (signal_strategy) {
@@ -331,7 +348,7 @@ std::vector<uint64_t> RdmaEndpoint::WriteBatch(
         send_wr_template_[batch_size - 1].send_flags |= IBV_SEND_SIGNALED;
     }
 
-    int rc = ibv_post_send(qp_, send_wr_template_, &bad_wr);
+    int rc = PostSendWithAutoReclaim(qp_, send_wr_template_);
 
     LOG_IF(ERROR, rc != 0) << "Error posting IBV_WR_RDMA_WRITE work request: " << strerror(rc);
 
