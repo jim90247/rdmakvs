@@ -448,10 +448,9 @@ uint64_t RdmaEndpoint::Recv(uint64_t offset, uint32_t length, ibv_recv_wr **bad_
 
 void RdmaEndpoint::CompareAndSwap(void *addr) {}
 
-void RdmaEndpoint::WaitForCompletion(std::unordered_set<uint64_t> &completed_wr,
-                                     bool poll_until_found, uint64_t target_wr_id) {
+void RdmaEndpoint::WaitForCompletion(bool poll_until_found, uint64_t target_wr_id) {
     // Early exit if target work request already completed
-    if (poll_until_found && completed_wr.find(target_wr_id) != completed_wr.end()) return;
+    if (poll_until_found && completed_wr_.find(target_wr_id) != completed_wr_.end()) return;
 
     const int kBatch = 32;
     struct ibv_wc wc_list[kBatch];
@@ -465,10 +464,12 @@ void RdmaEndpoint::WaitForCompletion(std::unordered_set<uint64_t> &completed_wr,
             DLOG_IF(ERROR, wc_list[i].status != IBV_WC_SUCCESS)
                 << "Work request " << wc_list[i].wr_id
                 << " completed with error: " << ibv_wc_status_str(wc_list[i].status);
-            completed_wr.insert(wc_list[i].wr_id);
-            num_wr_in_progress_--;
+            completed_wr_.insert(wc_list[i].wr_id);
+            num_signaled_wr_in_progress_--;
         }
     } while (
-        num_wr_in_progress_ > 0 &&
-        (n == 0 || (poll_until_found && completed_wr.find(target_wr_id) == completed_wr.end())));
+        num_signaled_wr_in_progress_ > 0 &&
+        (n == 0 || (poll_until_found && completed_wr_.find(target_wr_id) == completed_wr_.end())));
 }
+
+void RdmaEndpoint::ClearCompletedRecords() { completed_wr_.clear(); }

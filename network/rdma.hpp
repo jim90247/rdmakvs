@@ -1,14 +1,20 @@
 #pragma once
 
-#include <bits/stdint-uintn.h>
 #include <infiniband/verbs.h>
 #include <network/rdma.pb.h>
 #include <zmq.h>
 
+#include <cstdint>
 #include <network/common.hpp>
 #include <tuple>
 #include <unordered_set>
 #include <vector>
+
+using std::int64_t;
+using std::uint16_t;
+using std::uint32_t;
+using std::uint64_t;
+using std::uint8_t;
 
 enum class SignalStrategy {
     kSignalNone = 0,
@@ -52,8 +58,8 @@ class RdmaEndpoint {
                   ibv_send_wr **bad_wr = nullptr);
     uint64_t Recv(uint64_t offset, uint32_t length, ibv_recv_wr **bad_wr = nullptr);
     void CompareAndSwap(void *addr);
-    void WaitForCompletion(std::unordered_set<uint64_t> &completed_wr, bool poll_until_found,
-                           uint64_t target_wr_id);
+    void WaitForCompletion(bool poll_until_found, uint64_t target_wr_id);
+    void ClearCompletedRecords();
 
    protected:
     uint8_t ib_dev_port_;
@@ -83,6 +89,7 @@ class RdmaEndpoint {
    private:
     uint64_t next_wr_id_;
     int64_t num_wr_in_progress_;
+    std::unordered_set<uint64_t> completed_wr_;
 
     struct ibv_context *GetIbContextFromDevice(const char *device_name, const uint8_t port);
 
