@@ -278,7 +278,7 @@ void RdmaEndpoint::FillOutWriteWorkRequest(
 
 int RdmaEndpoint::PostSendWithAutoReclaim(struct ibv_qp *qp, struct ibv_send_wr *wr) {
     struct ibv_send_wr *bad_wr;
-    
+
     int rc = ibv_post_send(qp, wr, &bad_wr);
 
     // Automatic reclaim is not as efficient as manual reclaim.
@@ -306,7 +306,7 @@ uint64_t RdmaEndpoint::Write(bool initialized, size_t remote_id, uint64_t local_
     // Fill template
     FillOutWriteWorkRequest(sg_template_, send_wr_template_, remote_id,
                             {std::make_tuple(local_offset, remote_offset, length)}, flags);
-    
+
     int rc = PostSendWithAutoReclaim(qp_, send_wr_template_);
 
     LOG_IF(ERROR, rc != 0) << "Error posting IBV_WR_RDMA_WRITE work request: " << strerror(rc);
@@ -385,25 +385,24 @@ uint64_t RdmaEndpoint::Read(size_t remote_id, uint64_t local_offset, uint64_t re
         .lkey = mr_->lkey,
     };
 
-    struct ibv_send_wr *bad_wr,
-        wr = {
-            .wr_id = next_wr_id_++,
-            .next = nullptr,
-            .sg_list = &sg,
-            .num_sge = 1,
-            .opcode = IBV_WR_RDMA_READ,
-            .send_flags = flags,
-            .wr =
-                {
-                    .rdma =
-                        {
-                            .remote_addr =
-                                remote_info_[remote_id].memory_regions(0).address() + remote_offset,
-                            .rkey = remote_info_[remote_id].memory_regions(0).remote_key(),
-                        },
-                },
-        };
-    int rc = ibv_post_send(qp_, &wr, &bad_wr);
+    struct ibv_send_wr wr = {
+        .wr_id = next_wr_id_++,
+        .next = nullptr,
+        .sg_list = &sg,
+        .num_sge = 1,
+        .opcode = IBV_WR_RDMA_READ,
+        .send_flags = flags,
+        .wr =
+            {
+                .rdma =
+                    {
+                        .remote_addr =
+                            remote_info_[remote_id].memory_regions(0).address() + remote_offset,
+                        .rkey = remote_info_[remote_id].memory_regions(0).remote_key(),
+                    },
+            },
+    };
+    int rc = PostSendWithAutoReclaim(qp_, &wr);
 
     LOG_IF(ERROR, rc != 0) << "Error posting IBV_WR_RDMA_WRITE work request: " << strerror(rc);
     if (rc == 0 && (flags & IBV_SEND_SIGNALED)) num_signaled_wr_in_progress_ += 1;
@@ -420,16 +419,16 @@ uint64_t RdmaEndpoint::Send(uint64_t offset, uint32_t length, unsigned int flags
         .lkey = mr_->lkey,
     };
 
-    struct ibv_send_wr *bad_wr, wr = {
-                                    .wr_id = next_wr_id_++,
-                                    .next = nullptr,
-                                    .sg_list = &sg,
-                                    .num_sge = 1,
-                                    .opcode = IBV_WR_SEND,
-                                    .send_flags = flags,
-                                };
+    struct ibv_send_wr wr = {
+        .wr_id = next_wr_id_++,
+        .next = nullptr,
+        .sg_list = &sg,
+        .num_sge = 1,
+        .opcode = IBV_WR_SEND,
+        .send_flags = flags,
+    };
 
-    int rc = ibv_post_send(qp_, &wr, &bad_wr);
+    int rc = PostSendWithAutoReclaim(qp_, &wr);
 
     LOG_IF(ERROR, rc != 0) << "Error posting IBV_WR_SEND work request: " << strerror(rc);
     if (rc == 0 && (flags & IBV_SEND_SIGNALED)) num_signaled_wr_in_progress_ += 1;
