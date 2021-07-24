@@ -5,6 +5,8 @@ add_executable(
 target_link_libraries(
   hello_test
   gtest_main
+  gmock
+  network
 )
 
 include(GoogleTest)

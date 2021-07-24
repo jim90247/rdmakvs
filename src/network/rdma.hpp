@@ -29,6 +29,7 @@ const uint8_t kAnyIbPort = 0;
  * @brief Defines interface for an RDMA endpoint.
  */
 class IRdmaEndpoint {
+   public:
     virtual uint64_t Write(bool initialized, size_t remote_id, uint64_t local_offset,
                            uint64_t remote_offset, uint32_t length, unsigned int flags) = 0;
     virtual void InitializeFastWrite(size_t remote_id, size_t batch_size) = 0;
@@ -43,6 +44,7 @@ class IRdmaEndpoint {
     virtual void CompareAndSwap(void *addr) = 0;
     virtual void WaitForCompletion(bool poll_until_found, uint64_t target_wr_id) = 0;
     virtual void ClearCompletedRecords() = 0;
+    virtual ~IRdmaEndpoint();
 };
 
 // base class for any rdma service. establish ibv context, queue pair, etc.
