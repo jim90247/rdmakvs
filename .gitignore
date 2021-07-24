@@ -4,3 +4,5 @@
 .vscode/
 
 compile_flags.txt
+
+build/
