@@ -10,4 +10,4 @@ set(SOURCE_FILES
 )
 add_library(network ${SOURCE_FILES})
 
-target_link_libraries(network gflags glog ibverbs zmq protobuf tcmalloc proto)
+target_link_libraries(network gflags glog ibverbs zmq protobuf proto)
