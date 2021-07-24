@@ -16,4 +16,14 @@ include_directories(${RDMAKVS_INSTALL_INCLUDE_DIR})
 include_directories(${RDMAKVS_HEADERS_DIR})
 
 add_subdirectory(src)
-#add_subdirectory(tests)
+
+include(FetchContent)
+FetchContent_Declare(
+  googletest
+  URL https://github.com/google/googletest/archive/609281088cfefc76f9d0ce82e1ff6c30cc3591e5.zip
+)
+FetchContent_MakeAvailable(googletest)
+
+enable_testing()
+
+add_subdirectory(tests)
