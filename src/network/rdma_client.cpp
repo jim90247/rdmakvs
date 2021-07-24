@@ -1,6 +1,6 @@
 #include <glog/logging.h>
 
-#include <network/rdma.hpp>
+#include "network/rdma.hpp"
 
 RdmaClient::RdmaClient(char *ib_dev_name, uint8_t ib_dev_port, char *buffer, size_t buffer_size,
                        uint32_t max_send_count, uint32_t max_recv_count, ibv_qp_type qp_type)

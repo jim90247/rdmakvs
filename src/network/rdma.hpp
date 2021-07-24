@@ -1,14 +1,15 @@
 #pragma once
 
 #include <infiniband/verbs.h>
-#include <network/rdma.pb.h>
 #include <zmq.h>
 
 #include <cstdint>
-#include <network/common.hpp>
 #include <tuple>
 #include <unordered_set>
 #include <vector>
+
+#include "network/common.hpp"
+#include "proto/rdma.pb.h"
 
 using std::int64_t;
 using std::uint16_t;
