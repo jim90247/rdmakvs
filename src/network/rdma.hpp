@@ -8,8 +8,8 @@
 #include <unordered_set>
 #include <vector>
 
-#include "network/common.hpp"
-#include "proto/rdma.pb.h"
+#include "src/network/common.hpp"
+#include "src/proto/rdma.pb.h"
 
 using std::int64_t;
 using std::uint16_t;
@@ -25,8 +25,28 @@ enum class SignalStrategy {
 
 const uint8_t kAnyIbPort = 0;
 
+/**
+ * @brief Defines interface for an RDMA endpoint.
+ */
+class IRdmaEndpoint {
+    virtual uint64_t Write(bool initialized, size_t remote_id, uint64_t local_offset,
+                           uint64_t remote_offset, uint32_t length, unsigned int flags) = 0;
+    virtual void InitializeFastWrite(size_t remote_id, size_t batch_size) = 0;
+    virtual std::vector<uint64_t> WriteBatch(
+        bool initialized, size_t remote_id,
+        const std::vector<std::tuple<uint64_t, uint64_t, uint32_t>> &requests,
+        SignalStrategy signal_strategy, unsigned int flags) = 0;
+    virtual uint64_t Read(size_t remote_id, uint64_t local_offset, uint64_t remote_offset,
+                          uint32_t length, unsigned int flags) = 0;
+    virtual uint64_t Send(uint64_t offset, uint32_t length, unsigned int flags) = 0;
+    virtual uint64_t Recv(uint64_t offset, uint32_t length) = 0;
+    virtual void CompareAndSwap(void *addr) = 0;
+    virtual void WaitForCompletion(bool poll_until_found, uint64_t target_wr_id) = 0;
+    virtual void ClearCompletedRecords() = 0;
+};
+
 // base class for any rdma service. establish ibv context, queue pair, etc.
-class RdmaEndpoint {
+class RdmaEndpoint : public IRdmaEndpoint {
    public:
     /**
      * @brief Construct a new Rdma Endpoint object
