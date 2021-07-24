@@ -3,8 +3,9 @@
 #include <unistd.h>
 
 #include <iostream>
-#include <network/rdma.hpp>
 #include <unordered_set>
+
+#include "network/rdma.hpp"
 
 DEFINE_bool(server, true, "Is server");
 DEFINE_string(server_uri, "tcp://192.168.223.1:7889", "Zmq server URI");
@@ -19,8 +20,7 @@ void ServerMainFunction() {
         new RdmaServer(nullptr, kAnyIbPort, buffer, FLAGS_buffer_size, 128, 128, IBV_QPT_RC);
     server->Listen(FLAGS_server_uri.c_str());
     uint64_t wr_id = server->Write(false, 0, 0, 0, FLAGS_buffer_size);
-    std::unordered_set<uint64_t> completed_wr;
-    server->WaitForCompletion(completed_wr, true, wr_id);
+    server->WaitForCompletion(true, wr_id);
     std::cout << "RDMA WRITE completed\n";
 }
 
