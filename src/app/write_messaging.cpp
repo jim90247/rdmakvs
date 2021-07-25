@@ -1,3 +1,14 @@
+/**
+ * @file write_messaging.cpp
+ * @author jim90247 (jim90247@gmail.com)
+ * @brief A small app for testing RDMA WRITE-based messaging
+ * @version 0.1
+ * @date 2021-07-25
+ *
+ * @copyright Copyright (c) 2021
+ *
+ */
+
 #include <gflags/gflags.h>
 #include <glog/logging.h>
 #include <infiniband/verbs.h>
@@ -10,7 +21,8 @@
 DEFINE_string(endpoint, "tcp://192.168.223.1:7889", "Zmq endpoint");
 DEFINE_bool(server, false, "Run as server");
 
-const size_t kBufferSize = 1 << 10;
+const size_t kBufferSize = 1 << 11;
+const int kRound = 1000;
 
 void ServerMain() {
     unsigned char *buffer = new unsigned char[kBufferSize]();
@@ -23,14 +35,13 @@ void ServerMain() {
 
     int data = 0;
     int64_t track_id = 0;
-    while (track_id != rdmamsg::kRemoteMemoryNotEnough) {
-        LOG_EVERY_N(INFO, 20) << "Sending message (" << data << ")";
-        *reinterpret_cast<int *>(msg_ep->allocateOutboundMessageBuffer(sizeof(int))) = data;
+    while (data <= kRound) {
+        LOG_EVERY_N(INFO, kRound / 10) << "Sending message (" << data << ")";
+        *reinterpret_cast<int *>(msg_ep->AllocateOutboundMessageBuffer(sizeof(int))) = data;
         track_id = msg_ep->FlushOutboundMessage();
         msg_ep->BlockUntilComplete(track_id);
         data++;
     }
-    LOG(FATAL) << "Remote memory not enough QQ";
 }
 
 void ClientMain() {
@@ -43,7 +54,7 @@ void ClientMain() {
         new rdmamsg::RdmaWriteMessagingEndpoint(rdma_client, buffer, kBufferSize);
 
     int data = 0;
-    while (true) {
+    while (data <= kRound) {
         auto inbound_msg = msg_ep->CheckInboundMessage();
         while (inbound_msg.size == 0) {
             usleep(1);
@@ -52,7 +63,9 @@ void ClientMain() {
         CHECK_EQ(inbound_msg.size, sizeof(int));
         CHECK_EQ(*reinterpret_cast<int *>(inbound_msg.data), data);
 
-        LOG_EVERY_N(INFO, 20) << "Message content check passed (" << data << ")";
+        msg_ep->ReleaseInboundMessageBuffer();
+
+        LOG_EVERY_N(INFO, kRound / 10) << "Message content check passed (" << data << ")";
         data++;
     }
 }
