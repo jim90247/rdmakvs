@@ -4,6 +4,9 @@ project(src)
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
 add_subdirectory(proto)
 add_subdirectory(network)
+add_subdirectory(messaging)
+
+add_subdirectory(app)
 
 set(SERVER_SOURCE_FILES server.cpp)
 set(CLIENT_SOURCE_FILES client.cpp)
