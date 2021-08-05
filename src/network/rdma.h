@@ -95,7 +95,7 @@ class RdmaEndpoint : public IRdmaEndpoint {
     char *buf_;        // Buffer associated with local memory region
     size_t buf_size_;  // Size of the buffer associated with local memory region
 
-    const size_t kZmqMessageBufferSize = 1024;
+    const static size_t kZmqMessageBufferSize = 1024;
     void *zmq_context_;
     void *zmq_socket_;
     RdmaPeerInfo local_info_;  // Local information to share with remote peers

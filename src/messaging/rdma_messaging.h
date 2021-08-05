@@ -5,6 +5,7 @@
 
 #include "network/rdma.h"
 
+using std::int64_t;
 using std::size_t;
 
 namespace rdmamsg {
@@ -22,7 +23,7 @@ class IRdmaMessagingEndpoint {
      * @brief Allocate a region of memory for writing message content
      *
      * @param message_size the size of the memory region
-     * @return void* the memory region, or `nullptr` if the request cannot be satisfied
+     * @return the memory region, or `nullptr` if the request cannot be satisfied
      * @note Do not free the returned buffer! The returned memory region is not necessarily a new
      * memory buffer allocated via malloc() or similar function.
      */
@@ -31,7 +32,7 @@ class IRdmaMessagingEndpoint {
     /**
      * @brief Send all the allocated messages
      *
-     * @return int64_t an unique identifier that can be used to track if the flush completes, or
+     * @return an unique identifier that can be used to track if the flush completes, or
      * negative number for errors
      */
     virtual int64_t FlushOutboundMessage() = 0;
@@ -46,7 +47,7 @@ class IRdmaMessagingEndpoint {
     /**
      * @brief Check for inbound message
      *
-     * @return InboundMessage the message
+     * @return the message
      */
     virtual InboundMessage CheckInboundMessage() = 0;
 
@@ -83,7 +84,7 @@ class RdmaWriteMessagingEndpoint : public IRdmaMessagingEndpoint {
 
     // When polling size get this number, it means that remaining buffer at the end of the message
     // are empty, and should retry polling again at the start of the buffer
-    const int kWrapMarker = -1;
+    const static int kWrapMarker = -1;
 
     const size_t outbound_buffer_start_;
     const size_t outbound_buffer_end_;
