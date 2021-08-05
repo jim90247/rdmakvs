@@ -14,6 +14,7 @@
 #include <infiniband/verbs.h>
 #include <unistd.h>
 
+#include <chrono>
 #include <cstdint>
 
 #include "src/messaging/rdma_messaging.hpp"
@@ -21,26 +22,42 @@
 DEFINE_string(endpoint, "tcp://192.168.223.1:7889", "Zmq endpoint");
 DEFINE_bool(server, false, "Run as server");
 
-const size_t kBufferSize = 1 << 11;
-const int kRound = 1000;
+const size_t kBufferSize = 1 << 20;
+const size_t kMessageSize = 16;
+const unsigned long kRound = 16 << 20;
+const unsigned long kInboundReleasePeriod = 32 << 10;
+const unsigned long kOutboundFlushBatch = 1;
 
 void ServerMain() {
     unsigned char *buffer = new unsigned char[kBufferSize]();
     RdmaServer *rdma_server = new RdmaServer(nullptr, 0, reinterpret_cast<char *>(buffer),
                                              kBufferSize, 128, 128, IBV_QPT_RC);
     rdma_server->Listen(FLAGS_endpoint.c_str());
-
     rdmamsg::RdmaWriteMessagingEndpoint *msg_ep =
         new rdmamsg::RdmaWriteMessagingEndpoint(rdma_server, buffer, kBufferSize);
 
-    int data = 0;
-    int64_t track_id = 0;
-    while (data <= kRound) {
-        LOG_EVERY_N(INFO, kRound / 10) << "Sending message (" << data << ")";
-        *reinterpret_cast<int *>(msg_ep->AllocateOutboundMessageBuffer(sizeof(int))) = data;
-        track_id = msg_ep->FlushOutboundMessage();
-        msg_ep->BlockUntilComplete(track_id);
-        data++;
+    for (unsigned long round = 0, flush_round = 0, refresh_round = 0; round < kRound; round++) {
+        // Wait for request
+        rdmamsg::InboundMessage request = {.data = nullptr, .size = 0};
+        while (request.size == 0) {
+            request = msg_ep->CheckInboundMessage();
+        }
+        if (++refresh_round >= kInboundReleasePeriod) {
+            msg_ep->ReleaseInboundMessageBuffer();
+            refresh_round = 0;
+        }
+
+        // Process request
+        for (int offset = 0; offset < request.size; offset += sizeof(unsigned long)) {
+        }
+
+        // Send response
+        *reinterpret_cast<unsigned long *>(
+            msg_ep->AllocateOutboundMessageBuffer(sizeof(unsigned long))) = round;
+        if (++flush_round >= kOutboundFlushBatch) {
+            msg_ep->FlushOutboundMessage();
+            flush_round = 0;
+        }
     }
 }
 
@@ -49,25 +66,39 @@ void ClientMain() {
     RdmaClient *rdma_client = new RdmaClient(nullptr, 0, reinterpret_cast<char *>(buffer),
                                              kBufferSize, 128, 128, IBV_QPT_RC);
     rdma_client->Connect(FLAGS_endpoint.c_str());
-
     rdmamsg::RdmaWriteMessagingEndpoint *msg_ep =
         new rdmamsg::RdmaWriteMessagingEndpoint(rdma_client, buffer, kBufferSize);
 
-    int data = 0;
-    while (data <= kRound) {
-        auto inbound_msg = msg_ep->CheckInboundMessage();
-        while (inbound_msg.size == 0) {
-            usleep(1);
-            inbound_msg = msg_ep->CheckInboundMessage();
+    unsigned long sent_round = 0, completed_round = 0, flush_round = 0, refresh_round = 0;
+    auto start = std::chrono::steady_clock::now();
+    while (completed_round < kRound) {
+        // Send request
+        if (sent_round < kRound) {
+            *reinterpret_cast<unsigned long *>(
+                msg_ep->AllocateOutboundMessageBuffer(sizeof(unsigned long))) = sent_round;
+            sent_round++;
+            if (++flush_round >= kOutboundFlushBatch) {
+                msg_ep->FlushOutboundMessage();
+                flush_round = 0;
+            }
         }
-        CHECK_EQ(inbound_msg.size, sizeof(int));
-        CHECK_EQ(*reinterpret_cast<int *>(inbound_msg.data), data);
-
-        msg_ep->ReleaseInboundMessageBuffer();
-
-        LOG_EVERY_N(INFO, kRound / 10) << "Message content check passed (" << data << ")";
-        data++;
+        // Check for response
+        rdmamsg::InboundMessage response = msg_ep->CheckInboundMessage();
+        if (response.size > 0) {
+            // DCHECK_EQ(sizeof(unsigned long), response.size);
+            // DCHECK_EQ(completed_round, *reinterpret_cast<unsigned long *>(response.data));
+            completed_round++;
+            LOG_EVERY_N(INFO, kRound / 10) << "Progress: " << completed_round << " / " << kRound;
+            if (++refresh_round >= kInboundReleasePeriod) {
+                msg_ep->ReleaseInboundMessageBuffer();
+                refresh_round = 0;
+            }
+        }
     }
+    auto end = std::chrono::steady_clock::now();
+    long duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+    LOG(INFO) << kRound << " requests completed in " << duration_ms
+              << " ms. Messages per second: " << kRound / (duration_ms / 1000.0);
 }
 
 int main(int argc, char **argv) {

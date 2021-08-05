@@ -60,7 +60,7 @@ class IRdmaMessagingEndpoint {
     ~IRdmaMessagingEndpoint();
 };
 
-class RdmaWriteMessagingEndpoint : IRdmaMessagingEndpoint {
+class RdmaWriteMessagingEndpoint : public IRdmaMessagingEndpoint {
    public:
     RdmaWriteMessagingEndpoint(IRdmaEndpoint* endpoint, unsigned char* rdma_buffer,
                                size_t rdma_buffer_size);
