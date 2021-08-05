@@ -12,7 +12,9 @@ set(RDMAKVS_INSTALL_BIN_DIR ${PROJECT_SOURCE_DIR}/bin)
 set(RDMAKVS_HEADERS_DIR ${PROJECT_SOURCE_DIR}/include)
 include_directories(${PROJECT_SOURCE_DIR}/src)
 include_directories(${RDMAKVS_HEADERS_DIR})
-include_directories(${PROJECT_BINARY_DIR})
+
+# for protobuf generated files
+include_directories(${CMAKE_CURRENT_BINARY_DIR}/src)
 
 add_subdirectory(src)
 
@@ -25,4 +27,5 @@ FetchContent_MakeAvailable(googletest)
 
 enable_testing()
 
+include_directories(${PROJECT_SOURCE_DIR}/tests)
 add_subdirectory(tests)

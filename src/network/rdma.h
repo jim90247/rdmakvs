@@ -8,7 +8,6 @@
 #include <unordered_set>
 #include <vector>
 
-#include "network/common.hpp"
 #include "proto/rdma.pb.h"
 
 using std::int64_t;
@@ -130,20 +129,20 @@ class RdmaEndpoint : public IRdmaEndpoint {
 };
 
 // wait for clients to connect, implement connect and disconnect
-class RdmaServer : public Server, public RdmaEndpoint {
+class RdmaServer : public RdmaEndpoint {
    public:
     RdmaServer(char *ib_dev_name, uint8_t ib_dev_port, char *buffer, size_t buffer_size,
                uint32_t max_send_count, uint32_t max_recv_count, ibv_qp_type qp_type);
     ~RdmaServer();
-    virtual void Listen(const char *endpoint);
+    void Listen(const char *endpoint);
 };
 
 // connect to an rdma server
-class RdmaClient : public Client, public RdmaEndpoint {
+class RdmaClient : public RdmaEndpoint {
    public:
     RdmaClient(char *ib_dev_name, uint8_t ib_dev_port, char *buffer, size_t buffer_size,
                uint32_t max_send_count, uint32_t max_recv_count, ibv_qp_type qp_type);
     ~RdmaClient();
-    virtual void Connect(const char *endpoint);
-    virtual void Disconnect();
+    void Connect(const char *endpoint);
+    void Disconnect();
 };

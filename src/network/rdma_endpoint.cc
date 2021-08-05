@@ -11,7 +11,7 @@
 #include <stdexcept>
 #include <string>
 
-#include "network/rdma.hpp"
+#include "network/rdma.h"
 
 IRdmaEndpoint::~IRdmaEndpoint() {}
 

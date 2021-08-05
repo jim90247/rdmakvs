@@ -5,7 +5,7 @@
 #include <iostream>
 #include <unordered_set>
 
-#include "network/rdma.hpp"
+#include "network/rdma.h"
 
 DEFINE_bool(server, true, "Is server");
 DEFINE_string(server_uri, "tcp://192.168.223.1:7889", "Zmq server URI");

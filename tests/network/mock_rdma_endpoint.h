@@ -1,5 +1,5 @@
 #include "gmock/gmock.h"
-#include "src/network/rdma.hpp"
+#include "network/rdma.h"
 
 class MockRdmaEndpoint : public IRdmaEndpoint {
    public:

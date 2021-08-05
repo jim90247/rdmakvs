@@ -2,11 +2,10 @@ cmake_minimum_required(VERSION 3.10)
 project(network CXX)
 
 set(SOURCE_FILES
-    common.hpp
-    rdma.hpp
-    rdma_client.cpp
-    rdma_endpoint.cpp
-    rdma_server.cpp
+    rdma.h
+    rdma_client.cc
+    rdma_endpoint.cc
+    rdma_server.cc
 )
 add_library(network ${SOURCE_FILES})
 

@@ -1,5 +1,5 @@
 #include "gtest/gtest.h"
-#include "tests/network/mock_rdma_endpoint.hpp"
+#include "network/mock_rdma_endpoint.h"
 
 // Demonstrate some basic assertions.
 TEST(HelloTest, BasicAssertions) {
