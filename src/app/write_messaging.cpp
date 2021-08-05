@@ -17,7 +17,7 @@
 #include <chrono>
 #include <cstdint>
 
-#include "src/messaging/rdma_messaging.hpp"
+#include "messaging/rdma_messaging.hpp"
 
 DEFINE_string(endpoint, "tcp://192.168.223.1:7889", "Zmq endpoint");
 DEFINE_bool(server, false, "Run as server");

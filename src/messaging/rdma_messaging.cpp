@@ -1,4 +1,4 @@
-#include "src/messaging/rdma_messaging.hpp"
+#include "messaging/rdma_messaging.hpp"
 
 #include <glog/logging.h>
 #include <infiniband/verbs.h>

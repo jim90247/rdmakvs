@@ -3,7 +3,7 @@
 #include <queue>
 #include <vector>
 
-#include "src/network/rdma.hpp"
+#include "network/rdma.hpp"
 
 using std::size_t;
 

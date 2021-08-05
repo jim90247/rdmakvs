@@ -8,8 +8,8 @@
 #include <unordered_set>
 #include <vector>
 
-#include "src/network/common.hpp"
-#include "src/proto/rdma.pb.h"
+#include "network/common.hpp"
+#include "proto/rdma.pb.h"
 
 using std::int64_t;
 using std::uint16_t;
