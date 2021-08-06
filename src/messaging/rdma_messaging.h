@@ -18,24 +18,27 @@ struct InboundMessage {
 class IRdmaMessagingEndpoint {
    public:
     const static int64_t kNoOutboundMessage = -1;
+    const static int kAnyPeer = -1;
 
     /**
-     * @brief Allocate a region of memory for writing message content
+     * @brief Allocate a region of memory for writing message content for a specific peer
      *
+     * @param peer_id the id of the peer
      * @param message_size the size of the memory region
      * @return the memory region, or `nullptr` if the request cannot be satisfied
      * @note Do not free the returned buffer! The returned memory region is not necessarily a new
      * memory buffer allocated via malloc() or similar function.
      */
-    virtual void* AllocateOutboundMessageBuffer(int message_size) = 0;
+    virtual void* AllocateOutboundMessageBuffer(int peer_id, int message_size) = 0;
 
     /**
-     * @brief Send all the allocated messages
+     * @brief Send all the allocated messages for a specific peer
      *
+     * @param peer_id the id of the peer
      * @return an unique identifier that can be used to track if the flush completes, or
      * negative number for errors
      */
-    virtual int64_t FlushOutboundMessage() = 0;
+    virtual int64_t FlushOutboundMessage(int peer_id) = 0;
 
     /**
      * @brief Block until the flush complete
@@ -47,16 +50,19 @@ class IRdmaMessagingEndpoint {
     /**
      * @brief Check for inbound message
      *
+     * @param peer_id the id of the peer to check for, or `kAnyPeer` to check any peer
      * @return the message
      */
-    virtual InboundMessage CheckInboundMessage() = 0;
+    virtual InboundMessage CheckInboundMessage(int peer_id = kAnyPeer) = 0;
 
     /**
-     * @brief Release inbound message buffer used by previous `CheckInboundMessage` calls
+     * @brief Release inbound message buffer of a specific peer used by previous
+     * `CheckInboundMessage` calls
      *
+     * @param peer_id the id of the peer
      * @note Old data won't be available anymore
      */
-    virtual void ReleaseInboundMessageBuffer() = 0;
+    virtual void ReleaseInboundMessageBuffer(int peer_id) = 0;
 
     ~IRdmaMessagingEndpoint();
 };
@@ -65,11 +71,11 @@ class RdmaWriteMessagingEndpoint : public IRdmaMessagingEndpoint {
    public:
     RdmaWriteMessagingEndpoint(IRdmaEndpoint* endpoint, unsigned char* rdma_buffer,
                                size_t rdma_buffer_size);
-    virtual void* AllocateOutboundMessageBuffer(int message_size) override;
-    virtual void ReleaseInboundMessageBuffer() override;
-    virtual int64_t FlushOutboundMessage() override;
+    virtual void* AllocateOutboundMessageBuffer(int peer_id, int message_size) override;
+    virtual void ReleaseInboundMessageBuffer(int peer_id) override;
+    virtual int64_t FlushOutboundMessage(int peer_id) override;
     virtual void BlockUntilComplete(int64_t flush_id) override;
-    virtual InboundMessage CheckInboundMessage() override;
+    virtual InboundMessage CheckInboundMessage(int peer_id = kAnyPeer) override;
 
     struct OutboundMessage {
         uint64_t id;

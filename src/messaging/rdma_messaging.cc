@@ -52,7 +52,7 @@ RdmaWriteMessagingEndpoint::RdmaWriteMessagingEndpoint(IRdmaEndpoint* endpoint,
     endpoint_->InitializeFastWrite(0, 2);
 }
 
-void* RdmaWriteMessagingEndpoint::AllocateOutboundMessageBuffer(int message_size) {
+void* RdmaWriteMessagingEndpoint::AllocateOutboundMessageBuffer(int peer_id, int message_size) {
     void* ptr = nullptr;
     const size_t full_message_size = GetFullMessageSize(message_size);
 
@@ -107,7 +107,7 @@ void* RdmaWriteMessagingEndpoint::AllocateOutboundMessageBuffer(int message_size
     return ptr;
 }
 
-void RdmaWriteMessagingEndpoint::ReleaseInboundMessageBuffer() {
+void RdmaWriteMessagingEndpoint::ReleaseInboundMessageBuffer(int peer_id) {
     if (*inbound_buffer_tail_ptr_ <= inbound_buffer_head_) {
         // [  t    h ]
         // [ooxxxxxoo]
@@ -126,7 +126,7 @@ void RdmaWriteMessagingEndpoint::ReleaseInboundMessageBuffer() {
     __atomic_store(inbound_buffer_tail_ptr_, &inbound_buffer_head_, __ATOMIC_RELAXED);
 }
 
-int64_t RdmaWriteMessagingEndpoint::FlushOutboundMessage() {
+int64_t RdmaWriteMessagingEndpoint::FlushOutboundMessage(int peer_id) {
     if (outbound_buffer_tail_ == outbound_buffer_head_) {
         return kNoOutboundMessage;
     }
@@ -181,7 +181,7 @@ void RdmaWriteMessagingEndpoint::BlockUntilComplete(int64_t flush_id) {
     endpoint_->WaitForCompletion(true, flush_id);
 }
 
-InboundMessage RdmaWriteMessagingEndpoint::CheckInboundMessage() {
+InboundMessage RdmaWriteMessagingEndpoint::CheckInboundMessage(int peer_id) {
     // Determine the offset to check
     if (inbound_buffer_end_ - inbound_buffer_head_ < GetFullMessageSize(1)) {
         // Automatically wrap around since remaining buffer at the end is too small to store an

@@ -43,7 +43,7 @@ void ServerMain() {
             request = msg_ep->CheckInboundMessage();
         }
         if (++refresh_round >= kInboundReleasePeriod) {
-            msg_ep->ReleaseInboundMessageBuffer();
+            msg_ep->ReleaseInboundMessageBuffer(0);
             refresh_round = 0;
         }
 
@@ -53,9 +53,9 @@ void ServerMain() {
 
         // Send response
         *reinterpret_cast<unsigned long *>(
-            msg_ep->AllocateOutboundMessageBuffer(sizeof(unsigned long))) = round;
+            msg_ep->AllocateOutboundMessageBuffer(0, sizeof(unsigned long))) = round;
         if (++flush_round >= kOutboundFlushBatch) {
-            msg_ep->FlushOutboundMessage();
+            msg_ep->FlushOutboundMessage(0);
             flush_round = 0;
         }
     }
@@ -75,10 +75,10 @@ void ClientMain() {
         // Send request
         if (sent_round < kRound) {
             *reinterpret_cast<unsigned long *>(
-                msg_ep->AllocateOutboundMessageBuffer(sizeof(unsigned long))) = sent_round;
+                msg_ep->AllocateOutboundMessageBuffer(0, sizeof(unsigned long))) = sent_round;
             sent_round++;
             if (++flush_round >= kOutboundFlushBatch) {
-                msg_ep->FlushOutboundMessage();
+                msg_ep->FlushOutboundMessage(0);
                 flush_round = 0;
             }
         }
@@ -90,7 +90,7 @@ void ClientMain() {
             completed_round++;
             LOG_EVERY_N(INFO, kRound / 10) << "Progress: " << completed_round << " / " << kRound;
             if (++refresh_round >= kInboundReleasePeriod) {
-                msg_ep->ReleaseInboundMessageBuffer();
+                msg_ep->ReleaseInboundMessageBuffer(0);
                 refresh_round = 0;
             }
         }
