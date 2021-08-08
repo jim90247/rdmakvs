@@ -128,6 +128,7 @@ class RdmaEndpoint : public IRdmaEndpoint {
     uint32_t max_send_count_;
     ibv_qp_type qp_type_;
 
+    // Each thread should have its own copy of `next_wr_id_`
     uint64_t next_wr_id_;
     int64_t num_signaled_wr_in_progress_;
     std::unordered_set<uint64_t> completed_wr_;

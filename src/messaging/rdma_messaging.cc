@@ -143,7 +143,7 @@ int64_t RdmaWriteMessagingEndpoint::FlushOutboundMessage(int peer_id) {
     while (remote_avail_size <= total_message_size && refresh_count < kMaxRefreshCount) {
         // Update local copy of remote buffer tail (`*remote_buffer_tail_ptr_`)
         uint64_t tracker =
-            endpoint_->Read(0, kRemoteBufferTailPtrOffset, kInboundBufferTailPtrOffset,
+            endpoint_->Read(peer_id, kRemoteBufferTailPtrOffset, kInboundBufferTailPtrOffset,
                             sizeof(size_t), IBV_SEND_SIGNALED);
         endpoint_->WaitForCompletion(true, tracker);
         remote_avail_size = (inbound_buffer_end_ - inbound_buffer_start_) -
@@ -159,7 +159,7 @@ int64_t RdmaWriteMessagingEndpoint::FlushOutboundMessage(int peer_id) {
 
     if (outbound_buffer_head_ > outbound_buffer_tail_) {
         track_id =
-            endpoint_->Write(true, 0, outbound_buffer_tail_, remote_buffer_head_,
+            endpoint_->Write(true, peer_id, outbound_buffer_tail_, remote_buffer_head_,
                              outbound_buffer_head_ - outbound_buffer_tail_, IBV_SEND_SIGNALED);
     } else {
         std::vector<std::tuple<uint64_t, uint64_t, uint32_t>> requests = {
@@ -169,7 +169,7 @@ int64_t RdmaWriteMessagingEndpoint::FlushOutboundMessage(int peer_id) {
             std::make_tuple(outbound_buffer_start_, inbound_buffer_start_,
                             outbound_buffer_head_ - outbound_buffer_start_)};
 
-        track_id = endpoint_->WriteBatch(true, 0, requests, SignalStrategy::kSignalLast, 0).back();
+        track_id = endpoint_->WriteBatch(true, peer_id, requests, SignalStrategy::kSignalLast, 0).back();
     }
 
     outbound_buffer_tail_ = outbound_buffer_head_;
