@@ -38,8 +38,9 @@ class IRdmaEndpoint {
         SignalStrategy signal_strategy, unsigned int flags) = 0;
     virtual uint64_t Read(size_t remote_id, uint64_t local_offset, uint64_t remote_offset,
                           uint32_t length, unsigned int flags) = 0;
-    virtual uint64_t Send(uint64_t offset, uint32_t length, unsigned int flags) = 0;
-    virtual uint64_t Recv(uint64_t offset, uint32_t length) = 0;
+    virtual uint64_t Send(size_t remote_id, uint64_t offset, uint32_t length,
+                          unsigned int flags) = 0;
+    virtual uint64_t Recv(size_t remote_id, uint64_t offset, uint32_t length) = 0;
     virtual void CompareAndSwap(void *addr) = 0;
     virtual void WaitForCompletion(bool poll_until_found, uint64_t target_wr_id) = 0;
     virtual void ClearCompletedRecords() = 0;
@@ -76,9 +77,9 @@ class RdmaEndpoint : public IRdmaEndpoint {
         SignalStrategy signal_strategy, unsigned int flags = 0) override;
     uint64_t Read(size_t remote_id, uint64_t local_offset, uint64_t remote_offset, uint32_t length,
                   unsigned int flags = IBV_SEND_SIGNALED) override;
-    uint64_t Send(uint64_t offset, uint32_t length,
+    uint64_t Send(size_t remote_id, uint64_t offset, uint32_t length,
                   unsigned int flags = IBV_SEND_SIGNALED) override;
-    uint64_t Recv(uint64_t offset, uint32_t length) override;
+    uint64_t Recv(size_t remote_id, uint64_t offset, uint32_t length) override;
     void CompareAndSwap(void *addr) override;
     void WaitForCompletion(bool poll_until_found, uint64_t target_wr_id) override;
     void ClearCompletedRecords() override;
@@ -115,19 +116,25 @@ class RdmaEndpoint : public IRdmaEndpoint {
     };
     std::vector<RdmaConnection> connections_;
 
-    void PopulateLocalInfo();
-    size_t ExchangePeerInfo(void *zmq_socket, bool send_first);
-
-    struct ibv_qp *PrepareQueuePair(uint32_t max_send_count, uint32_t max_recv_count,
-                                    ibv_qp_type qp_type);
-    void ConnectQueuePair(ibv_qp *qp, RdmaPeerQueuePairInfo remote_qp_info);
+    // Initializes the new queue pair and returns the index of `connections_` for new connection
+    size_t PrepareNewConnection();
+    // Gets the remote peer's RDMA connection information
+    void ExchangePeerInfo(size_t peer_idx, bool send_first);
+    // Modifies the queue pair state to ready-to-send
+    void ConnectPeer(size_t peer_idx);
 
    private:
+    uint32_t max_recv_count_;
+    uint32_t max_send_count_;
+    ibv_qp_type qp_type_;
+
     uint64_t next_wr_id_;
     int64_t num_signaled_wr_in_progress_;
     std::unordered_set<uint64_t> completed_wr_;
 
     struct ibv_context *GetIbContextFromDevice(const char *device_name, const uint8_t port);
+    void PopulateLocalInfo(size_t peer_idx);
+    void PrepareQueuePair(size_t peer_idx);
 
     const static size_t kMaxBatchSize = 32;
     struct ibv_send_wr send_wr_template_[kMaxBatchSize];
