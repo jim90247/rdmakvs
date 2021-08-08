@@ -22,11 +22,15 @@
 DEFINE_string(endpoint, "tcp://192.168.223.1:7889", "Zmq endpoint");
 DEFINE_bool(server, false, "Run as server");
 
+// Experiment parameters
+DEFINE_uint64(inbound_gc_period, 4096,
+              "Number of rounds between two ReleaseInboundMessageBuffer calls");
+DEFINE_uint64(outbound_batch, 1, "Number of requests to accumulate before one RDMA write (flush)");
+DEFINE_uint64(round, 16 << 20, "Rounds");
+
 const size_t kBufferSize = 1 << 20;
 const size_t kMessageSize = 16;
-const unsigned long kRound = 16 << 20;
-const unsigned long kInboundReleasePeriod = 32 << 10;
-const unsigned long kOutboundFlushBatch = 1;
+const size_t kLatencyMeasurePeriod = 10001;
 
 void ServerMain() {
     unsigned char *buffer = new unsigned char[kBufferSize]();
@@ -36,25 +40,27 @@ void ServerMain() {
     rdmamsg::RdmaWriteMessagingEndpoint *msg_ep =
         new rdmamsg::RdmaWriteMessagingEndpoint(rdma_server, buffer, kBufferSize);
 
-    for (unsigned long round = 0, flush_round = 0, refresh_round = 0; round < kRound; round++) {
+    for (unsigned long round = 0, flush_round = 0, refresh_round = 0; round < FLAGS_round;
+         round++) {
         // Wait for request
         rdmamsg::InboundMessage request = {.data = nullptr, .size = 0};
         while (request.size == 0) {
             request = msg_ep->CheckInboundMessage();
-        }
-        if (++refresh_round >= kInboundReleasePeriod) {
-            msg_ep->ReleaseInboundMessageBuffer();
-            refresh_round = 0;
         }
 
         // Process request
         for (int offset = 0; offset < request.size; offset += sizeof(unsigned long)) {
         }
 
+        if (++refresh_round >= FLAGS_inbound_gc_period) {
+            msg_ep->ReleaseInboundMessageBuffer();
+            refresh_round = 0;
+        }
+
         // Send response
         *reinterpret_cast<unsigned long *>(
             msg_ep->AllocateOutboundMessageBuffer(sizeof(unsigned long))) = round;
-        if (++flush_round >= kOutboundFlushBatch) {
+        if (++flush_round >= FLAGS_outbound_batch) {
             msg_ep->FlushOutboundMessage();
             flush_round = 0;
         }
@@ -69,17 +75,25 @@ void ClientMain() {
     rdmamsg::RdmaWriteMessagingEndpoint *msg_ep =
         new rdmamsg::RdmaWriteMessagingEndpoint(rdma_client, buffer, kBufferSize);
 
-    unsigned long sent_round = 0, completed_round = 0, flush_round = 0, refresh_round = 0;
+    unsigned long sent_round = 0, completed_round = 0, flush_round = 0, refresh_round = 0,
+                  latency_measure_send_round = 0, latency_measure_recv_round = 0;
+    std::vector<std::chrono::time_point<std::chrono::steady_clock>> start_time;
+    std::vector<std::chrono::time_point<std::chrono::steady_clock>> end_time;
+
     auto start = std::chrono::steady_clock::now();
-    while (completed_round < kRound) {
+    while (completed_round < FLAGS_round) {
         // Send request
-        if (sent_round < kRound) {
+        if (sent_round < FLAGS_round) {
             *reinterpret_cast<unsigned long *>(
                 msg_ep->AllocateOutboundMessageBuffer(sizeof(unsigned long))) = sent_round;
             sent_round++;
-            if (++flush_round >= kOutboundFlushBatch) {
+            if (++flush_round >= FLAGS_outbound_batch) {
                 msg_ep->FlushOutboundMessage();
                 flush_round = 0;
+            }
+            if (++latency_measure_send_round >= kLatencyMeasurePeriod) {
+                start_time.push_back(std::chrono::steady_clock::now());
+                latency_measure_send_round = 0;
             }
         }
         // Check for response
@@ -88,8 +102,16 @@ void ClientMain() {
             // DCHECK_EQ(sizeof(unsigned long), response.size);
             // DCHECK_EQ(completed_round, *reinterpret_cast<unsigned long *>(response.data));
             completed_round++;
-            LOG_EVERY_N(INFO, kRound / 10) << "Progress: " << completed_round << " / " << kRound;
-            if (++refresh_round >= kInboundReleasePeriod) {
+            LOG_EVERY_N(INFO, FLAGS_round / 10)
+                << "Progress: " << completed_round << " / " << FLAGS_round;
+            if (++latency_measure_recv_round >= kLatencyMeasurePeriod) {
+                // TODO(jim90247): Measure the latency earlier. Currently we can only receive one
+                // response every time we send a request. We should be able to process multiple
+                // requests between two requests are sent.
+                end_time.push_back(std::chrono::steady_clock::now());
+                latency_measure_recv_round = 0;
+            }
+            if (++refresh_round >= FLAGS_inbound_gc_period) {
                 msg_ep->ReleaseInboundMessageBuffer();
                 refresh_round = 0;
             }
@@ -97,8 +119,17 @@ void ClientMain() {
     }
     auto end = std::chrono::steady_clock::now();
     long duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-    LOG(INFO) << kRound << " requests completed in " << duration_ms
-              << " ms. Messages per second: " << kRound / (duration_ms / 1000.0);
+    LOG(INFO) << FLAGS_round << " requests completed in " << duration_ms
+              << " ms. Messages per second: " << FLAGS_round / (duration_ms / 1000.0);
+
+    long total_latency_ns = 0;
+    for (int i = 0; i < start_time.size(); i++) {
+        total_latency_ns +=
+            std::chrono::duration_cast<std::chrono::nanoseconds>(end_time[i] - start_time[i])
+                .count();
+    }
+    LOG(INFO) << "Average latency: " << (double)total_latency_ns / start_time.size()
+              << " nanoseconds";
 }
 
 int main(int argc, char **argv) {
