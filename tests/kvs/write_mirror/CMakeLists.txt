@@ -1,13 +1,13 @@
 add_executable(
-  hello_test
-  client.cpp
+  client_test
+  client_test.cpp
 )
 target_link_libraries(
-  hello_test
+  client_test
   gtest_main
   gmock
   network
 )
 
 include(GoogleTest)
-gtest_discover_tests(hello_test)
+gtest_discover_tests(client_test)
