@@ -87,19 +87,33 @@ class RdmaEndpoint : public IRdmaEndpoint {
     uint8_t ib_dev_port_;
     struct ibv_port_attr ib_dev_port_info_;
     struct ibv_context *ctx_;
+    // Shared protected domain between all connections
     struct ibv_pd *pd_;
+    // Shared completion queue between all connections (queue pairs)
     struct ibv_cq *cq_;
-    struct ibv_qp *qp_;
+    // Shared memory region between all connections. Unless with special protocol to avoid race
+    // conditions, the whole buffer should be divided into subregions, and each region should belong
+    // to only one connection.
     struct ibv_mr *mr_;
 
-    char *buf_;        // Buffer associated with local memory region
-    size_t buf_size_;  // Size of the buffer associated with local memory region
+    // Buffer associated with local memory region
+    char *buf_;
+    // Size of the buffer associated with local memory region
+    size_t buf_size_;
 
     const static size_t kZmqMessageBufferSize = 1024;
     void *zmq_context_;
     void *zmq_socket_;
-    RdmaPeerInfo local_info_;  // Local information to share with remote peers
-    std::vector<RdmaPeerInfo> remote_info_;
+
+    struct RdmaConnection {
+        // Each queue pair corresponds to a remote connection
+        struct ibv_qp *qp;
+        // Local information to share with remote peers
+        RdmaPeerInfo local_info;
+        // Remote RDMA informations
+        RdmaPeerInfo remote_info;
+    };
+    std::vector<RdmaConnection> connections_;
 
     void PopulateLocalInfo();
     size_t ExchangePeerInfo(void *zmq_socket, bool send_first);
