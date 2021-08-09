@@ -30,7 +30,7 @@ DEFINE_uint64(round, 16 << 20, "Rounds");
 
 const size_t kBufferSize = 1 << 20;
 const size_t kMessageSize = 16;
-const size_t kLatencyMeasurePeriod = 10001;
+const size_t kLatencyMeasurePeriod = 101;
 
 void ServerMain() {
     unsigned char *buffer = new unsigned char[kBufferSize]();
@@ -68,6 +68,11 @@ void ServerMain() {
 }
 
 void ClientMain() {
+    // TODO(jim90247): check the cause of high latency overhead when round is too large. Sudden
+    // increase in latency is observed when client wrap around the message buffer.
+    LOG_IF(WARNING, FLAGS_round >= (1 << 16))
+        << "This will run for " << FLAGS_round
+        << " rounds. Consider using smaller rounds to measure latency to prevent other overhead.";
     unsigned char *buffer = new unsigned char[kBufferSize]();
     RdmaClient *rdma_client = new RdmaClient(nullptr, 0, reinterpret_cast<char *>(buffer),
                                              kBufferSize, 128, 128, IBV_QPT_RC);
@@ -98,16 +103,13 @@ void ClientMain() {
         }
         // Check for response
         rdmamsg::InboundMessage response = msg_ep->CheckInboundMessage();
-        if (response.size > 0) {
+        while (response.size > 0) {
             // DCHECK_EQ(sizeof(unsigned long), response.size);
             // DCHECK_EQ(completed_round, *reinterpret_cast<unsigned long *>(response.data));
             completed_round++;
             LOG_EVERY_N(INFO, FLAGS_round / 10)
                 << "Progress: " << completed_round << " / " << FLAGS_round;
             if (++latency_measure_recv_round >= kLatencyMeasurePeriod) {
-                // TODO(jim90247): Measure the latency earlier. Currently we can only receive one
-                // response every time we send a request. We should be able to process multiple
-                // requests between two requests are sent.
                 end_time.push_back(std::chrono::steady_clock::now());
                 latency_measure_recv_round = 0;
             }
@@ -115,6 +117,7 @@ void ClientMain() {
                 msg_ep->ReleaseInboundMessageBuffer();
                 refresh_round = 0;
             }
+            response = msg_ep->CheckInboundMessage();
         }
     }
     auto end = std::chrono::steady_clock::now();
