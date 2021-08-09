@@ -11,7 +11,7 @@ using std::size_t;
 namespace rdmamsg {
 
 struct InboundMessage {
-    void* data;
+    volatile void* data;
     int size;
 };
 
@@ -27,7 +27,7 @@ class IRdmaMessagingEndpoint {
      * @note Do not free the returned buffer! The returned memory region is not necessarily a new
      * memory buffer allocated via malloc() or similar function.
      */
-    virtual void* AllocateOutboundMessageBuffer(int message_size) = 0;
+    virtual volatile void* AllocateOutboundMessageBuffer(int message_size) = 0;
 
     /**
      * @brief Send all the allocated messages
@@ -65,7 +65,7 @@ class RdmaWriteMessagingEndpoint : public IRdmaMessagingEndpoint {
    public:
     RdmaWriteMessagingEndpoint(IRdmaEndpoint* endpoint, unsigned char* rdma_buffer,
                                size_t rdma_buffer_size);
-    virtual void* AllocateOutboundMessageBuffer(int message_size) override;
+    virtual volatile void* AllocateOutboundMessageBuffer(int message_size) override;
     virtual void ReleaseInboundMessageBuffer() override;
     virtual int64_t FlushOutboundMessage() override;
     virtual void BlockUntilComplete(int64_t flush_id) override;
@@ -80,7 +80,7 @@ class RdmaWriteMessagingEndpoint : public IRdmaMessagingEndpoint {
    private:
     IRdmaEndpoint* endpoint_;
     std::queue<OutboundMessage> outbound_pending_message_;
-    unsigned char* rdma_buffer_;
+    volatile unsigned char* rdma_buffer_;
 
     // When polling size get this number, it means that remaining buffer at the end of the message
     // are empty, and should retry polling again at the start of the buffer
@@ -100,11 +100,11 @@ class RdmaWriteMessagingEndpoint : public IRdmaMessagingEndpoint {
     // Located at the beginning of the rdma buffer. Remote peer can read this value via RDMA READ to
     // know the available memory region of this messaging endpoint.
     const static size_t kInboundBufferTailPtrOffset = 0;
-    size_t* const inbound_buffer_tail_ptr_;
+    volatile size_t* const inbound_buffer_tail_ptr_;
     // Located at the beginning of the rdma buffer, right after inbound buffer tail. We can read the
     // inbound buffer tail of remote peer to this memory using RDMA READ.
     const static size_t kRemoteBufferTailPtrOffset = sizeof(size_t);
-    size_t* const remote_buffer_tail_ptr_;
+    volatile size_t* const remote_buffer_tail_ptr_;
 
     const static int kMaxRefreshCount = 1 << 20;
 

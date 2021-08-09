@@ -58,7 +58,7 @@ void ServerMain() {
         }
 
         // Send response
-        *reinterpret_cast<unsigned long *>(
+        *reinterpret_cast<volatile unsigned long *>(
             msg_ep->AllocateOutboundMessageBuffer(sizeof(unsigned long))) = round;
         if (++flush_round >= FLAGS_outbound_batch) {
             msg_ep->FlushOutboundMessage();
@@ -84,7 +84,7 @@ void ClientMain() {
     while (completed_round < FLAGS_round) {
         // Send request
         if (sent_round < FLAGS_round) {
-            *reinterpret_cast<unsigned long *>(
+            *reinterpret_cast<volatile unsigned long *>(
                 msg_ep->AllocateOutboundMessageBuffer(sizeof(unsigned long))) = sent_round;
             sent_round++;
             if (++flush_round >= FLAGS_outbound_batch) {
