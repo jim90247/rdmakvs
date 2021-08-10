@@ -306,15 +306,12 @@ uint64_t RdmaEndpoint::Write(bool initialized, size_t remote_id, uint64_t local_
     }
 
     // Fill template
-    FillOutWriteWorkRequest(
-        sg_template_, send_wr_template_, remote_id,
-        // seems that the vector construction here consumes significant amount of time.
-        // TODO(jim90247): maybe use a static vector here to hold the incoming value.
-        {std::make_tuple(local_offset, remote_offset, length)}, flags);
+    FillOutWriteWorkRequest(sg_template_, send_wr_template_, remote_id,
+                            {std::make_tuple(local_offset, remote_offset, length)}, flags);
 
     int rc = PostSendWithAutoReclaim(qp_, send_wr_template_);
 
-    LOG_IF(ERROR, rc != 0) << "Error posting IBV_WR_RDMA_WRITE work request: " << strerror(rc);
+    DLOG_IF(ERROR, rc != 0) << "Error posting IBV_WR_RDMA_WRITE work request: " << strerror(rc);
     if (rc == 0 && (flags & IBV_SEND_SIGNALED)) num_signaled_wr_in_progress_ += 1;
 
     return send_wr_template_[0].wr_id;
