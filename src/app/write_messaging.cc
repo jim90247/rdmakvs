@@ -104,8 +104,8 @@ void ClientMain() {
         // Check for response
         rdmamsg::InboundMessage response = msg_ep->CheckInboundMessage();
         while (response.size > 0) {
-            // DCHECK_EQ(sizeof(unsigned long), response.size);
-            // DCHECK_EQ(completed_round, *reinterpret_cast<unsigned long *>(response.data));
+            DCHECK_EQ(sizeof(unsigned long), response.size);
+            DCHECK_EQ(completed_round, *reinterpret_cast<volatile unsigned long *>(response.data));
             completed_round++;
             LOG_EVERY_N(INFO, FLAGS_round / 10)
                 << "Progress: " << completed_round << " / " << FLAGS_round;
