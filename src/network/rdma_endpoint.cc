@@ -480,6 +480,7 @@ void RdmaEndpoint::WaitForCompletion(bool poll_until_found, uint64_t target_wr_i
             DLOG_IF(ERROR, wc_list[i].status != IBV_WC_SUCCESS)
                 << "Work request " << wc_list[i].wr_id
                 << " completed with error: " << ibv_wc_status_str(wc_list[i].status);
+            // TODO(jim90247): Use a more efficient way to store completed work request
             completed_wr_.insert(wc_list[i].wr_id);
             num_signaled_wr_in_progress_--;
         }
