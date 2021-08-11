@@ -68,7 +68,7 @@ void ServerMain() {
 }
 
 void ClientMain() {
-    // TODO(jim90247): check the cause of high latency overhead when round is too large. Sudden
+    // TODO: check the cause of high latency overhead when round is too large. Sudden
     // increase in latency is observed when client wrap around the message buffer.
     LOG_IF(WARNING, FLAGS_round >= (1 << 16))
         << "This will run for " << FLAGS_round
@@ -104,7 +104,7 @@ void ClientMain() {
         // Check for response
         rdmamsg::InboundMessage response = msg_ep->CheckInboundMessage();
         while (response.size > 0) {
-            // FIXME(jim90247): these checks failed!
+            // FIXME: these checks failed!
             DCHECK_EQ(sizeof(unsigned long), response.size);
             DCHECK_EQ(completed_round, *reinterpret_cast<volatile unsigned long *>(response.data));
             completed_round++;
