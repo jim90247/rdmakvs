@@ -33,9 +33,8 @@ const size_t kMessageSize = 16;
 const size_t kLatencyMeasurePeriod = 101;
 
 void ServerMain() {
-    unsigned char *buffer = new unsigned char[kBufferSize]();
-    RdmaServer *rdma_server = new RdmaServer(nullptr, 0, reinterpret_cast<char *>(buffer),
-                                             kBufferSize, 128, 128, IBV_QPT_RC);
+    volatile unsigned char *buffer = new volatile unsigned char[kBufferSize]();
+    RdmaServer *rdma_server = new RdmaServer(nullptr, 0, buffer, kBufferSize, 128, 128, IBV_QPT_RC);
     rdma_server->Listen(FLAGS_endpoint.c_str());
     rdmamsg::RdmaWriteMessagingEndpoint *msg_ep =
         new rdmamsg::RdmaWriteMessagingEndpoint(rdma_server, buffer, kBufferSize);
@@ -73,9 +72,8 @@ void ClientMain() {
     LOG_IF(WARNING, FLAGS_round >= (1 << 16))
         << "This will run for " << FLAGS_round
         << " rounds. Consider using smaller rounds to measure latency to prevent other overhead.";
-    unsigned char *buffer = new unsigned char[kBufferSize]();
-    RdmaClient *rdma_client = new RdmaClient(nullptr, 0, reinterpret_cast<char *>(buffer),
-                                             kBufferSize, 128, 128, IBV_QPT_RC);
+    volatile unsigned char *buffer = new volatile unsigned char[kBufferSize]();
+    RdmaClient *rdma_client = new RdmaClient(nullptr, 0, buffer, kBufferSize, 128, 128, IBV_QPT_RC);
     rdma_client->Connect(FLAGS_endpoint.c_str());
     rdmamsg::RdmaWriteMessagingEndpoint *msg_ep =
         new rdmamsg::RdmaWriteMessagingEndpoint(rdma_client, buffer, kBufferSize);

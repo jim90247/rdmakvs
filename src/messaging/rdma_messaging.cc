@@ -15,7 +15,7 @@ namespace rdmamsg {
 IRdmaMessagingEndpoint::~IRdmaMessagingEndpoint() {}
 
 RdmaWriteMessagingEndpoint::RdmaWriteMessagingEndpoint(IRdmaEndpoint* endpoint,
-                                                       unsigned char* rdma_buffer,
+                                                       volatile unsigned char* rdma_buffer,
                                                        size_t rdma_buffer_size)
     : rdma_buffer_(rdma_buffer),
       outbound_buffer_start_(kMessagingMetadataSize),

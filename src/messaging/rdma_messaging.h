@@ -63,7 +63,7 @@ class IRdmaMessagingEndpoint {
 
 class RdmaWriteMessagingEndpoint : public IRdmaMessagingEndpoint {
    public:
-    RdmaWriteMessagingEndpoint(IRdmaEndpoint* endpoint, unsigned char* rdma_buffer,
+    RdmaWriteMessagingEndpoint(IRdmaEndpoint* endpoint, volatile unsigned char* rdma_buffer,
                                size_t rdma_buffer_size);
     virtual volatile void* AllocateOutboundMessageBuffer(int message_size) override;
     virtual void ReleaseInboundMessageBuffer() override;

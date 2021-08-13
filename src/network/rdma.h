@@ -62,8 +62,8 @@ class RdmaEndpoint : public IRdmaEndpoint {
      * @param max_recv_count Max number of outgoing RECV work requests at the same time.
      * @param qp_type Queue pair type. Default is IBV_QPT_RC.
      */
-    RdmaEndpoint(char *ib_dev_name, uint8_t ib_dev_port, char *buffer, size_t buffer_size,
-                 uint32_t max_send_count, uint32_t max_recv_count,
+    RdmaEndpoint(char *ib_dev_name, uint8_t ib_dev_port, volatile unsigned char *buffer,
+                 size_t buffer_size, uint32_t max_send_count, uint32_t max_recv_count,
                  ibv_qp_type qp_type = IBV_QPT_RC);
     ~RdmaEndpoint();
     uint64_t Write(bool initialized, size_t remote_id, uint64_t local_offset,
@@ -92,8 +92,8 @@ class RdmaEndpoint : public IRdmaEndpoint {
     struct ibv_qp *qp_;
     struct ibv_mr *mr_;
 
-    char *buf_;        // Buffer associated with local memory region
-    size_t buf_size_;  // Size of the buffer associated with local memory region
+    volatile unsigned char *buf_;  // Buffer associated with local memory region
+    size_t buf_size_;              // Size of the buffer associated with local memory region
 
     const static size_t kZmqMessageBufferSize = 1024;
     void *zmq_context_;
@@ -131,8 +131,9 @@ class RdmaEndpoint : public IRdmaEndpoint {
 // wait for clients to connect, implement connect and disconnect
 class RdmaServer : public RdmaEndpoint {
    public:
-    RdmaServer(char *ib_dev_name, uint8_t ib_dev_port, char *buffer, size_t buffer_size,
-               uint32_t max_send_count, uint32_t max_recv_count, ibv_qp_type qp_type);
+    RdmaServer(char *ib_dev_name, uint8_t ib_dev_port, volatile unsigned char *buffer,
+               size_t buffer_size, uint32_t max_send_count, uint32_t max_recv_count,
+               ibv_qp_type qp_type);
     ~RdmaServer();
     void Listen(const char *endpoint);
 };
@@ -140,8 +141,9 @@ class RdmaServer : public RdmaEndpoint {
 // connect to an rdma server
 class RdmaClient : public RdmaEndpoint {
    public:
-    RdmaClient(char *ib_dev_name, uint8_t ib_dev_port, char *buffer, size_t buffer_size,
-               uint32_t max_send_count, uint32_t max_recv_count, ibv_qp_type qp_type);
+    RdmaClient(char *ib_dev_name, uint8_t ib_dev_port, volatile unsigned char *buffer,
+               size_t buffer_size, uint32_t max_send_count, uint32_t max_recv_count,
+               ibv_qp_type qp_type);
     ~RdmaClient();
     void Connect(const char *endpoint);
     void Disconnect();
