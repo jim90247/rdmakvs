@@ -16,10 +16,12 @@ int main(int argc, char **argv) {
 
     const size_t buffer_size = 1 << 23;
     const size_t message_size = 2;
-    char *buffer = new char[buffer_size]();
-    sprintf(buffer + 100, "this is server");
+    volatile char *buffer = new volatile char[buffer_size]();
+    sprintf(const_cast<char *>(buffer + 100), "this is server");
 
-    RdmaServer *endpoint = new RdmaServer(nullptr, 0, buffer, buffer_size, 128, 128, IBV_QPT_RC);
+    RdmaServer *endpoint =
+        new RdmaServer(nullptr, 0, reinterpret_cast<volatile unsigned char *>(buffer), buffer_size,
+                       128, 128, IBV_QPT_RC);
     endpoint->Listen("tcp://192.168.223.1:7889");
 
     uint64_t wr_id, wr_id2;

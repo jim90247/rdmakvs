@@ -15,8 +15,9 @@
 
 IRdmaEndpoint::~IRdmaEndpoint() {}
 
-RdmaEndpoint::RdmaEndpoint(char *ib_dev_name, uint8_t ib_dev_port, char *buffer, size_t buffer_size,
-                           uint32_t max_send_count, uint32_t max_recv_count, ibv_qp_type qp_type)
+RdmaEndpoint::RdmaEndpoint(char *ib_dev_name, uint8_t ib_dev_port, volatile unsigned char *buffer,
+                           size_t buffer_size, uint32_t max_send_count, uint32_t max_recv_count,
+                           ibv_qp_type qp_type)
     : ib_dev_port_(ib_dev_port),
       buf_(buffer),
       buf_size_(buffer_size),
@@ -41,7 +42,7 @@ RdmaEndpoint::RdmaEndpoint(char *ib_dev_name, uint8_t ib_dev_port, char *buffer,
     CHECK_EQ(ibv_query_port(ctx_, ib_dev_port_, &ib_dev_port_info_), 0)
         << "Failed to query port " << ib_dev_port_ << " (" << ib_dev_name << ")";
 
-    mr_ = ibv_reg_mr(pd_, buf_, buf_size_,
+    mr_ = ibv_reg_mr(pd_, const_cast<unsigned char *>(buf_), buf_size_,
                      IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_WRITE);
     CHECK(mr_ != nullptr) << "Failed to register memory region";
 
@@ -319,7 +320,7 @@ uint64_t RdmaEndpoint::Write(bool initialized, size_t remote_id, uint64_t local_
 
     int rc = PostSendWithAutoReclaim(connections_.at(remote_id).qp, send_wr_template_);
 
-    LOG_IF(ERROR, rc != 0) << "Error posting IBV_WR_RDMA_WRITE work request: " << strerror(rc);
+    DLOG_IF(ERROR, rc != 0) << "Error posting IBV_WR_RDMA_WRITE work request: " << strerror(rc);
     if (rc == 0 && (flags & IBV_SEND_SIGNALED)) num_signaled_wr_in_progress_ += 1;
 
     return send_wr_template_[0].wr_id;
@@ -486,6 +487,7 @@ void RdmaEndpoint::WaitForCompletion(bool poll_until_found, uint64_t target_wr_i
             DLOG_IF(ERROR, wc_list[i].status != IBV_WC_SUCCESS)
                 << "Work request " << wc_list[i].wr_id
                 << " completed with error: " << ibv_wc_status_str(wc_list[i].status);
+            // TODO: Use a more efficient way to store completed work request
             completed_wr_.insert(wc_list[i].wr_id);
             num_signaled_wr_in_progress_--;
         }

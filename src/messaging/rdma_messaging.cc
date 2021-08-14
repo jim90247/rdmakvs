@@ -15,7 +15,7 @@ namespace rdmamsg {
 IRdmaMessagingEndpoint::~IRdmaMessagingEndpoint() {}
 
 RdmaWriteMessagingEndpoint::RdmaWriteMessagingEndpoint(IRdmaEndpoint* endpoint,
-                                                       unsigned char* rdma_buffer,
+                                                       volatile unsigned char* rdma_buffer,
                                                        size_t rdma_buffer_size)
     : rdma_buffer_(rdma_buffer),
       outbound_buffer_start_(kMessagingMetadataSize),
@@ -26,10 +26,10 @@ RdmaWriteMessagingEndpoint::RdmaWriteMessagingEndpoint(IRdmaEndpoint* endpoint,
       inbound_buffer_end_(rdma_buffer_size),
       // Place local inbound buffer tail at the beginning of the rdma buffer
       inbound_buffer_tail_ptr_(
-          reinterpret_cast<size_t*>(rdma_buffer_ + kInboundBufferTailPtrOffset)),
+          reinterpret_cast<volatile size_t*>(rdma_buffer_ + kInboundBufferTailPtrOffset)),
       // Place remote remote buffer tail at the beginning of the rdma buffer
       remote_buffer_tail_ptr_(
-          reinterpret_cast<size_t*>(rdma_buffer_ + kRemoteBufferTailPtrOffset)) {
+          reinterpret_cast<volatile size_t*>(rdma_buffer_ + kRemoteBufferTailPtrOffset)) {
     CHECK_NOTNULL(endpoint);
     CHECK_NOTNULL(rdma_buffer_);
     // Buffer must be large enough to store local and remote inbound buffer tail
@@ -52,8 +52,8 @@ RdmaWriteMessagingEndpoint::RdmaWriteMessagingEndpoint(IRdmaEndpoint* endpoint,
     endpoint_->InitializeFastWrite(0, 2);
 }
 
-void* RdmaWriteMessagingEndpoint::AllocateOutboundMessageBuffer(int peer_id, int message_size) {
-    void* ptr = nullptr;
+volatile void* RdmaWriteMessagingEndpoint::AllocateOutboundMessageBuffer(int peer_id, int message_size) {
+    volatile void* ptr = nullptr;
     const size_t full_message_size = GetFullMessageSize(message_size);
 
     // Allocate a contiguous memory region
@@ -62,9 +62,10 @@ void* RdmaWriteMessagingEndpoint::AllocateOutboundMessageBuffer(int peer_id, int
         // [ooooxxxxxoo]
         if (outbound_buffer_end_ - outbound_buffer_head_ >= full_message_size) {
             // Fill message size
-            *reinterpret_cast<int*>(rdma_buffer_ + outbound_buffer_head_) = message_size;
+            *reinterpret_cast<volatile int*>(rdma_buffer_ + outbound_buffer_head_) = message_size;
 
-            ptr = reinterpret_cast<void*>(rdma_buffer_ + outbound_buffer_head_ + sizeof(int));
+            ptr = reinterpret_cast<volatile void*>(rdma_buffer_ + outbound_buffer_head_ +
+                                                   sizeof(int));
             outbound_buffer_head_ += full_message_size;
 
             // Set trailing byte to 0xff for polling
@@ -74,14 +75,16 @@ void* RdmaWriteMessagingEndpoint::AllocateOutboundMessageBuffer(int peer_id, int
             // remaining buffer size is not enough, poller should automatically wrap around to the
             // start of the buffer.
             if (outbound_buffer_end_ - outbound_buffer_head_ >= GetFullMessageSize(1)) {
-                *reinterpret_cast<int*>(rdma_buffer_ + outbound_buffer_head_) = kWrapMarker;
+                *reinterpret_cast<volatile int*>(rdma_buffer_ + outbound_buffer_head_) =
+                    kWrapMarker;
             }
 
             // Fill message size
-            *reinterpret_cast<int*>(rdma_buffer_ + outbound_buffer_start_) = message_size;
+            *reinterpret_cast<volatile int*>(rdma_buffer_ + outbound_buffer_start_) = message_size;
 
             // Wrap around
-            ptr = reinterpret_cast<void*>(rdma_buffer_ + outbound_buffer_start_ + sizeof(int));
+            ptr = reinterpret_cast<volatile void*>(rdma_buffer_ + outbound_buffer_start_ +
+                                                   sizeof(int));
             outbound_buffer_head_ = outbound_buffer_start_ + full_message_size;
 
             // Set trailing byte to 0xff for polling
@@ -92,9 +95,10 @@ void* RdmaWriteMessagingEndpoint::AllocateOutboundMessageBuffer(int peer_id, int
         // [xooooooxxxx]
         if (outbound_buffer_tail_ - outbound_buffer_head_ >= full_message_size) {
             // Fill message size
-            *reinterpret_cast<int*>(rdma_buffer_ + outbound_buffer_head_) = message_size;
+            *reinterpret_cast<volatile int*>(rdma_buffer_ + outbound_buffer_head_) = message_size;
 
-            ptr = reinterpret_cast<void*>(rdma_buffer_ + outbound_buffer_head_ + sizeof(int));
+            ptr = reinterpret_cast<volatile void*>(rdma_buffer_ + outbound_buffer_head_ +
+                                                   sizeof(int));
             outbound_buffer_head_ += full_message_size;
 
             // Set trailing byte to 0xff for polling
@@ -188,11 +192,11 @@ InboundMessage RdmaWriteMessagingEndpoint::CheckInboundMessage(int peer_id) {
         // message
         inbound_buffer_head_ = inbound_buffer_start_;
     }
-    int message_body_size = *reinterpret_cast<int*>(rdma_buffer_ + inbound_buffer_head_);
+    int message_body_size = *reinterpret_cast<volatile int*>(rdma_buffer_ + inbound_buffer_head_);
     if (message_body_size == kWrapMarker) {
         // Wrap around
         inbound_buffer_head_ = inbound_buffer_start_;
-        message_body_size = *reinterpret_cast<int*>(rdma_buffer_ + inbound_buffer_head_);
+        message_body_size = *reinterpret_cast<volatile int*>(rdma_buffer_ + inbound_buffer_head_);
     }
 
     // Check the offset
@@ -209,7 +213,8 @@ InboundMessage RdmaWriteMessagingEndpoint::CheckInboundMessage(int peer_id) {
 
     size_t data_offset = inbound_buffer_head_ + sizeof(int);
     inbound_buffer_head_ += full_message_size;
-    return {.data = reinterpret_cast<void*>(rdma_buffer_ + data_offset), .size = message_body_size};
+    return {.data = reinterpret_cast<volatile void*>(rdma_buffer_ + data_offset),
+            .size = message_body_size};
 }
 
 size_t RdmaWriteMessagingEndpoint::GetDirtyMemorySize(size_t head, size_t tail, size_t lower_bound,

@@ -14,11 +14,13 @@ int main(int argc, char **argv) {
 
     const size_t buffer_size = 1 << 24;
     const size_t message_size = 2;
-    char *buffer = new char[buffer_size]();
+    volatile char *buffer = new volatile char[buffer_size]();
 
-    sprintf(buffer, "this is client");
-    sprintf(buffer + 300, "secret");
-    RdmaClient *endpoint = new RdmaClient(nullptr, 0, buffer, buffer_size, 100, 100, IBV_QPT_RC);
+    sprintf(const_cast<char *>(buffer), "this is client");
+    sprintf(const_cast<char *>(buffer + 300), "secret");
+    RdmaClient *endpoint =
+        new RdmaClient(nullptr, 0, reinterpret_cast<volatile unsigned char *>(buffer), buffer_size,
+                       100, 100, IBV_QPT_RC);
     endpoint->Connect("tcp://192.168.223.1:7889");
 
     /*
