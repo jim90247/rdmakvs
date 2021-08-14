@@ -2,8 +2,9 @@
 
 #include "network/rdma.h"
 
-RdmaClient::RdmaClient(char *ib_dev_name, uint8_t ib_dev_port, char *buffer, size_t buffer_size,
-                       uint32_t max_send_count, uint32_t max_recv_count, ibv_qp_type qp_type)
+RdmaClient::RdmaClient(char *ib_dev_name, uint8_t ib_dev_port, volatile unsigned char *buffer,
+                       size_t buffer_size, uint32_t max_send_count, uint32_t max_recv_count,
+                       ibv_qp_type qp_type)
     : RdmaEndpoint(ib_dev_name, ib_dev_port, buffer, buffer_size, max_send_count, max_recv_count,
                    qp_type) {
     zmq_socket_ = zmq_socket(zmq_context_, ZMQ_REQ);
