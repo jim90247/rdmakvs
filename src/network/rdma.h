@@ -44,7 +44,7 @@ class IRdmaEndpoint {
     virtual void CompareAndSwap(void *addr) = 0;
     virtual void WaitForCompletion(size_t remote_id, bool poll_until_found,
                                    uint64_t target_wr_id) = 0;
-    virtual void ClearCompletedRecords() = 0;
+    virtual void ClearCompletedRecords(size_t remote_id) = 0;
     virtual ~IRdmaEndpoint();
 };
 
@@ -83,7 +83,7 @@ class RdmaEndpoint : public IRdmaEndpoint {
     uint64_t Recv(size_t remote_id, uint64_t offset, uint32_t length) override;
     void CompareAndSwap(void *addr) override;
     void WaitForCompletion(size_t remote_id, bool poll_until_found, uint64_t target_wr_id) override;
-    void ClearCompletedRecords() override;
+    void ClearCompletedRecords(size_t remote_id) override;
 
    protected:
     uint8_t ib_dev_port_;
@@ -113,11 +113,24 @@ class RdmaEndpoint : public IRdmaEndpoint {
         struct ibv_sge sge_template[kMaxBatchSize];
     };
 
+    // Work request usage status of a RDMA connection
+    struct RdmaWorkRequestStatus {
+        // Next work request id
+        uint64_t next_wr_id = 0;
+        // Number of in-progress signaled work requests
+        int64_t in_progress_signaled_wrs = 0;
+        // Completed work request ids
+        std::unordered_set<uint64_t> completed_wr_ids;
+    };
+
     struct RdmaConnection {
         // Each queue pair corresponds to a remote connection
         struct ibv_qp *qp = nullptr;
         // Independent completion queue for each connection
         struct ibv_cq *cq = nullptr;
+        // Work request status of the connection
+        // NOTE: currently we assume this status will only be modified by one thread
+        RdmaWorkRequestStatus wr_status;
         // Local information to share with remote peers
         RdmaPeerInfo local_info;
         // Remote RDMA informations
@@ -138,11 +151,6 @@ class RdmaEndpoint : public IRdmaEndpoint {
     uint32_t max_recv_count_;
     uint32_t max_send_count_;
     ibv_qp_type qp_type_;
-
-    // Each thread should have its own copy of `next_wr_id_`
-    uint64_t next_wr_id_;
-    int64_t num_signaled_wr_in_progress_;
-    std::unordered_set<uint64_t> completed_wr_;
 
     struct ibv_context *GetIbContextFromDevice(const char *device_name, const uint8_t port);
     void PopulateLocalInfo(size_t peer_idx);

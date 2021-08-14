@@ -23,8 +23,6 @@ RdmaEndpoint::RdmaEndpoint(char *ib_dev_name, uint8_t ib_dev_port, volatile unsi
       buf_size_(buffer_size),
       max_send_count_(max_send_count),
       max_recv_count_(max_recv_count),
-      next_wr_id_(0),
-      num_signaled_wr_in_progress_(0),
       qp_type_(qp_type),
       zmq_socket_(nullptr) {
     CHECK(buf_ != nullptr) << "Provided buffer pointer is a nullptr";
@@ -295,7 +293,7 @@ void RdmaEndpoint::FillOutWriteWorkRequest(
         sge[i].length = length;
         sge[i].addr = reinterpret_cast<uint64_t>(buf_) + local_offset;
 
-        wr[i].wr_id = next_wr_id_++;
+        wr[i].wr_id = connection.wr_status.next_wr_id++;
         wr[i].send_flags = flags;
         wr[i].wr.rdma.remote_addr = remote_mr.address() + remote_offset;
     }
@@ -336,7 +334,9 @@ uint64_t RdmaEndpoint::Write(bool initialized, size_t remote_id, uint64_t local_
     int rc = PostSendWithAutoReclaim(remote_id);
 
     DLOG_IF(ERROR, rc != 0) << "Error posting IBV_WR_RDMA_WRITE work request: " << strerror(rc);
-    if (rc == 0 && (flags & IBV_SEND_SIGNALED)) num_signaled_wr_in_progress_ += 1;
+    if (rc == 0 && (flags & IBV_SEND_SIGNALED)) {
+        connections_.at(remote_id).wr_status.in_progress_signaled_wrs++;
+    }
 
     return connections_.at(remote_id).req_template.send_wr_template[0].wr_id;
 }
@@ -379,11 +379,11 @@ std::vector<uint64_t> RdmaEndpoint::WriteBatch(
     if (rc == 0) {
         switch (signal_strategy) {
             case SignalStrategy::kSignalLast:
-                num_signaled_wr_in_progress_ += 1;
+                connection.wr_status.in_progress_signaled_wrs += 1;
                 wr_ids.push_back(wr[batch_size - 1].wr_id);
                 break;
             case SignalStrategy::kSignalAll:
-                num_signaled_wr_in_progress_ += batch_size;
+                connection.wr_status.in_progress_signaled_wrs += batch_size;
                 for (int i = 0; i < batch_size; i++) wr_ids.push_back(wr[i].wr_id);
                 break;
             default:
@@ -410,7 +410,7 @@ uint64_t RdmaEndpoint::Read(size_t remote_id, uint64_t local_offset, uint64_t re
     };
 
     struct ibv_send_wr wr = {
-        .wr_id = next_wr_id_++,
+        .wr_id = connection.wr_status.next_wr_id++,
         .next = nullptr,
         .sg_list = &sg,
         .num_sge = 1,
@@ -428,7 +428,9 @@ uint64_t RdmaEndpoint::Read(size_t remote_id, uint64_t local_offset, uint64_t re
     int rc = PostSendWithAutoReclaim(remote_id, &wr);
 
     LOG_IF(ERROR, rc != 0) << "Error posting IBV_WR_RDMA_WRITE work request: " << strerror(rc);
-    if (rc == 0 && (flags & IBV_SEND_SIGNALED)) num_signaled_wr_in_progress_ += 1;
+    if (rc == 0 && (flags & IBV_SEND_SIGNALED)) {
+        connection.wr_status.in_progress_signaled_wrs += 1;
+    }
 
     return wr.wr_id;
 }
@@ -436,6 +438,7 @@ uint64_t RdmaEndpoint::Read(size_t remote_id, uint64_t local_offset, uint64_t re
 uint64_t RdmaEndpoint::Send(size_t remote_id, uint64_t offset, uint32_t length,
                             unsigned int flags) {
     DLOG_IF(FATAL, offset + length >= buf_size_) << "Local offset " << offset << "out of bound";
+    RdmaWorkRequestStatus &wr_status = connections_.at(remote_id).wr_status;
 
     struct ibv_sge sg = {
         .addr = reinterpret_cast<uint64_t>(buf_) + offset,
@@ -444,7 +447,7 @@ uint64_t RdmaEndpoint::Send(size_t remote_id, uint64_t offset, uint32_t length,
     };
 
     struct ibv_send_wr wr = {
-        .wr_id = next_wr_id_++,
+        .wr_id = wr_status.next_wr_id++,
         .next = nullptr,
         .sg_list = &sg,
         .num_sge = 1,
@@ -455,14 +458,16 @@ uint64_t RdmaEndpoint::Send(size_t remote_id, uint64_t offset, uint32_t length,
     int rc = PostSendWithAutoReclaim(remote_id, &wr);
 
     LOG_IF(ERROR, rc != 0) << "Error posting IBV_WR_SEND work request: " << strerror(rc);
-    if (rc == 0 && (flags & IBV_SEND_SIGNALED)) num_signaled_wr_in_progress_ += 1;
+    if (rc == 0 && (flags & IBV_SEND_SIGNALED)) wr_status.in_progress_signaled_wrs += 1;
 
     return wr.wr_id;
 }
 
 uint64_t RdmaEndpoint::Recv(size_t remote_id, uint64_t offset, uint32_t length) {
-    // TODO(jim90247): consider using shared receive queue?
+    // TODO: consider using shared receive queue?
     DLOG_IF(FATAL, offset + length >= buf_size_) << "Local offset " << offset << "out of bound";
+
+    RdmaWorkRequestStatus &wr_status = connections_.at(remote_id).wr_status;
 
     struct ibv_sge sg = {
         .addr = reinterpret_cast<uint64_t>(buf_) + offset,
@@ -471,7 +476,7 @@ uint64_t RdmaEndpoint::Recv(size_t remote_id, uint64_t offset, uint32_t length) 
     };
 
     struct ibv_recv_wr *bad_wr, wr = {
-                                    .wr_id = next_wr_id_++,
+                                    .wr_id = wr_status.next_wr_id++,
                                     .next = nullptr,
                                     .sg_list = &sg,
                                     .num_sge = 1,
@@ -480,7 +485,7 @@ uint64_t RdmaEndpoint::Recv(size_t remote_id, uint64_t offset, uint32_t length) 
     int rc = ibv_post_recv(connections_.at(remote_id).qp, &wr, &bad_wr);
 
     LOG_IF(ERROR, rc != 0) << "Error posting recv wr: " << strerror(rc);
-    if (rc == 0) num_signaled_wr_in_progress_ += 1;
+    if (rc == 0) wr_status.in_progress_signaled_wrs += 1;
 
     return wr.wr_id;
 }
@@ -489,8 +494,12 @@ void RdmaEndpoint::CompareAndSwap(void *addr) { LOG(FATAL) << "CompareAndSwap is
 
 void RdmaEndpoint::WaitForCompletion(size_t remote_id, bool poll_until_found,
                                      uint64_t target_wr_id) {
+    RdmaWorkRequestStatus &wr_status = connections_.at(remote_id).wr_status;
     // Early exit if target work request already completed
-    if (poll_until_found && completed_wr_.find(target_wr_id) != completed_wr_.end()) return;
+    if (poll_until_found &&
+        wr_status.completed_wr_ids.find(target_wr_id) != wr_status.completed_wr_ids.end()) {
+        return;
+    }
 
     struct ibv_cq *cq = connections_.at(remote_id).cq;
 
@@ -507,12 +516,14 @@ void RdmaEndpoint::WaitForCompletion(size_t remote_id, bool poll_until_found,
                 << "Work request " << wc_list[i].wr_id
                 << " completed with error: " << ibv_wc_status_str(wc_list[i].status);
             // TODO: Use a more efficient way to store completed work request
-            completed_wr_.insert(wc_list[i].wr_id);
-            num_signaled_wr_in_progress_--;
+            wr_status.completed_wr_ids.insert(wc_list[i].wr_id);
+            wr_status.in_progress_signaled_wrs--;
         }
-    } while (
-        num_signaled_wr_in_progress_ > 0 &&
-        (n == 0 || (poll_until_found && completed_wr_.find(target_wr_id) == completed_wr_.end())));
+    } while (wr_status.in_progress_signaled_wrs > 0 &&
+             (n == 0 || (poll_until_found && wr_status.completed_wr_ids.find(target_wr_id) ==
+                                                 wr_status.completed_wr_ids.end())));
 }
 
-void RdmaEndpoint::ClearCompletedRecords() { completed_wr_.clear(); }
+void RdmaEndpoint::ClearCompletedRecords(size_t remote_id) {
+    connections_.at(remote_id).wr_status.completed_wr_ids.clear();
+}
