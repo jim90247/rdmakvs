@@ -115,18 +115,44 @@ void RdmaWriteMessagingEndpoint::ReleaseInboundMessageBuffer() {
     if (*inbound_buffer_tail_ptr_ <= inbound_buffer_head_) {
         // [  t    h ]
         // [ooxxxxxoo]
-        std::fill(rdma_buffer_ + *inbound_buffer_tail_ptr_, rdma_buffer_ + inbound_buffer_head_,
-                  static_cast<unsigned char>(0));
+        // std::fill(rdma_buffer_ + *inbound_buffer_tail_ptr_, rdma_buffer_ + inbound_buffer_head_,
+        //           static_cast<unsigned char>(0));
+        for (size_t offset = *inbound_buffer_tail_ptr_; offset < inbound_buffer_head_; offset++) {
+            rdma_buffer_[offset] = 0;
+            DLOG_IF(FATAL, rdma_buffer_[offset] != 0) << "offset: " << offset;
+        }
+        // __builtin___clear_cache(reinterpret_cast<char*>(const_cast<unsigned char*>(
+        //                             rdma_buffer_ + inbound_buffer_start_)),
+        //                         reinterpret_cast<char*>(const_cast<unsigned char*>(
+        //                             rdma_buffer_ + inbound_buffer_end_)));
+        DLOG(INFO) << "Cleared range: [" << *inbound_buffer_tail_ptr_ << ", "
+                   << inbound_buffer_head_ << ")";
     } else {
         // [  h    t ]
         // [xxoooooxx]
-        std::fill(rdma_buffer_ + *inbound_buffer_tail_ptr_, rdma_buffer_ + inbound_buffer_end_,
-                  static_cast<unsigned char>(0));
-        std::fill(rdma_buffer_ + inbound_buffer_start_, rdma_buffer_ + inbound_buffer_head_,
-                  static_cast<unsigned char>(0));
+        // std::fill(rdma_buffer_ + *inbound_buffer_tail_ptr_, rdma_buffer_ + inbound_buffer_end_,
+        //           static_cast<unsigned char>(0));
+        // std::fill(rdma_buffer_ + inbound_buffer_start_, rdma_buffer_ + inbound_buffer_head_,
+        //           static_cast<unsigned char>(0));
+        for (size_t offset = *inbound_buffer_tail_ptr_; offset < inbound_buffer_end_; offset++) {
+            rdma_buffer_[offset] = 0;
+            DLOG_IF(FATAL, rdma_buffer_[offset] != 0) << "offset: " << offset;
+        }
+        for (size_t offset = inbound_buffer_start_; offset < inbound_buffer_head_; offset++) {
+            rdma_buffer_[offset] = 0;
+            DLOG_IF(FATAL, rdma_buffer_[offset] != 0)
+                << "offset: " << offset << ", content: " << static_cast<int>(rdma_buffer_[offset]);
+        }
+        __builtin___clear_cache(reinterpret_cast<char*>(const_cast<unsigned char*>(
+                                    rdma_buffer_ + inbound_buffer_start_)),
+                                reinterpret_cast<char*>(const_cast<unsigned char*>(
+                                    rdma_buffer_ + inbound_buffer_end_)));
+        DLOG(INFO) << "Cleared range: [" << *inbound_buffer_tail_ptr_ << ", " << inbound_buffer_end_
+                   << ") and [" << inbound_buffer_start_ << ", " << inbound_buffer_head_ << ")";
     }
 
     // TODO: what is the most appropriate memory order here?
+    // *inbound_buffer_tail_ptr_ = inbound_buffer_head_;
     __atomic_store(inbound_buffer_tail_ptr_, &inbound_buffer_head_, __ATOMIC_RELAXED);
 }
 
@@ -194,6 +220,7 @@ InboundMessage RdmaWriteMessagingEndpoint::CheckInboundMessage() {
     }
     int message_body_size = *reinterpret_cast<volatile int*>(rdma_buffer_ + inbound_buffer_head_);
     if (message_body_size == kWrapMarker) {
+        // *reinterpret_cast<volatile int*>(rdma_buffer_ + inbound_buffer_head_) = 0;
         // Wrap around
         inbound_buffer_head_ = inbound_buffer_start_;
         message_body_size = *reinterpret_cast<volatile int*>(rdma_buffer_ + inbound_buffer_head_);
@@ -204,12 +231,14 @@ InboundMessage RdmaWriteMessagingEndpoint::CheckInboundMessage() {
         // No message
         return {.data = nullptr, .size = 0};
     }
+    // *reinterpret_cast<volatile int*>(rdma_buffer_ + inbound_buffer_head_) = 0;
     size_t full_message_size = GetFullMessageSize(message_body_size);
 
     // Poll for full message
     while (rdma_buffer_[inbound_buffer_head_ + full_message_size - 1] != 0xff) {
         // busy waiting
     }
+    // rdma_buffer_[inbound_buffer_head_ + full_message_size - 1] = 0x0;
 
     size_t data_offset = inbound_buffer_head_ + sizeof(int);
     inbound_buffer_head_ += full_message_size;

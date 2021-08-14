@@ -80,7 +80,7 @@ class RdmaWriteMessagingEndpoint : public IRdmaMessagingEndpoint {
    private:
     IRdmaEndpoint* endpoint_;
     std::queue<OutboundMessage> outbound_pending_message_;
-    volatile unsigned char* rdma_buffer_;
+    volatile unsigned char* const rdma_buffer_;
 
     // When polling size get this number, it means that remaining buffer at the end of the message
     // are empty, and should retry polling again at the start of the buffer

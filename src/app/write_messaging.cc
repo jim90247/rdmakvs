@@ -101,10 +101,15 @@ void ClientMain() {
         }
         // Check for response
         rdmamsg::InboundMessage response = msg_ep->CheckInboundMessage();
+        int check_count = 0;
         while (response.size > 0) {
+            ++check_count;
             DCHECK_EQ(sizeof(unsigned long), response.size);
             // FIXME: when using `while` instead of `if`, this check sometimes fails at the
             // beginning of the inbound message buffer!
+            DLOG_IF(FATAL, completed_round != *static_cast<volatile unsigned long *>(response.data))
+                << "data offset: " << static_cast<volatile unsigned char *>(response.data) - buffer
+                << ", check count: " << check_count;
             DCHECK_EQ(completed_round, *reinterpret_cast<volatile unsigned long *>(response.data));
             completed_round++;
             LOG_EVERY_N(INFO, FLAGS_round / 10)
