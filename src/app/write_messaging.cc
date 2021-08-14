@@ -101,7 +101,7 @@ void ClientMain() {
         }
         // Check for response
         rdmamsg::InboundMessage response = msg_ep->CheckInboundMessage();
-        while (response.size > 0) {
+        if (response.size > 0) {
             DCHECK_EQ(sizeof(unsigned long), response.size);
             // FIXME: when using `while` instead of `if`, this check sometimes fails at the
             // beginning of the inbound message buffer!
@@ -117,7 +117,6 @@ void ClientMain() {
                 msg_ep->ReleaseInboundMessageBuffer();
                 refresh_round = 0;
             }
-            response = msg_ep->CheckInboundMessage();
         }
     }
     auto end = std::chrono::steady_clock::now();
