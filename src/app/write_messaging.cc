@@ -102,8 +102,9 @@ void ClientMain() {
         // Check for response
         rdmamsg::InboundMessage response = msg_ep->CheckInboundMessage();
         while (response.size > 0) {
-            // FIXME: these checks failed!
             DCHECK_EQ(sizeof(unsigned long), response.size);
+            // FIXME: when using `while` instead of `if`, this check sometimes fails at the
+            // beginning of the inbound message buffer!
             DCHECK_EQ(completed_round, *reinterpret_cast<volatile unsigned long *>(response.data));
             completed_round++;
             LOG_EVERY_N(INFO, FLAGS_round / 10)
