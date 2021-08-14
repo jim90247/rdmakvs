@@ -43,9 +43,10 @@ class IRdmaMessagingEndpoint {
     /**
      * @brief Block until the flush complete
      *
+     * @param peer_id the id of the corresponding peer of the flush
      * @param flush_id the message id to wait for
      */
-    virtual void BlockUntilComplete(int64_t flush_id) = 0;
+    virtual void BlockUntilComplete(int peer_id, int64_t flush_id) = 0;
 
     /**
      * @brief Check for inbound message
@@ -74,7 +75,7 @@ class RdmaWriteMessagingEndpoint : public IRdmaMessagingEndpoint {
     virtual volatile void* AllocateOutboundMessageBuffer(int peer_id, int message_size) override;
     virtual void ReleaseInboundMessageBuffer(int peer_id) override;
     virtual int64_t FlushOutboundMessage(int peer_id) override;
-    virtual void BlockUntilComplete(int64_t flush_id) override;
+    virtual void BlockUntilComplete(int peer_id, int64_t flush_id) override;
     virtual InboundMessage CheckInboundMessage(int peer_id = kAnyPeer) override;
 
     struct OutboundMessage {

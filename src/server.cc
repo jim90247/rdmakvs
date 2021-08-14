@@ -153,7 +153,7 @@ int main(int argc, char **argv) {
             batch[i] = std::make_tuple(offset, offset, message_size);
         }
         if (b % (64 / kBatchSize) == 0) {
-            if (b > 0) endpoint->WaitForCompletion(true, wr_id);
+            if (b > 0) endpoint->WaitForCompletion(0, true, wr_id);
             wr_id =
                 endpoint->WriteBatch(true, 0, batch, SignalStrategy::kSignalLast, IBV_SEND_INLINE)
                     .back();
@@ -161,7 +161,7 @@ int main(int argc, char **argv) {
             endpoint->WriteBatch(true, 0, batch, SignalStrategy::kSignalNone, IBV_SEND_INLINE);
         }
     }
-    endpoint->WaitForCompletion(true, wr_id);
+    endpoint->WaitForCompletion(0, true, wr_id);
 
     auto end_tuple2 = std::chrono::steady_clock::now();
 

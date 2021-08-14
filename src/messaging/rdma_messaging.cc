@@ -52,7 +52,8 @@ RdmaWriteMessagingEndpoint::RdmaWriteMessagingEndpoint(IRdmaEndpoint* endpoint,
     endpoint_->InitializeFastWrite(0, 2);
 }
 
-volatile void* RdmaWriteMessagingEndpoint::AllocateOutboundMessageBuffer(int peer_id, int message_size) {
+volatile void* RdmaWriteMessagingEndpoint::AllocateOutboundMessageBuffer(int peer_id,
+                                                                         int message_size) {
     volatile void* ptr = nullptr;
     const size_t full_message_size = GetFullMessageSize(message_size);
 
@@ -149,7 +150,7 @@ int64_t RdmaWriteMessagingEndpoint::FlushOutboundMessage(int peer_id) {
         uint64_t tracker =
             endpoint_->Read(peer_id, kRemoteBufferTailPtrOffset, kInboundBufferTailPtrOffset,
                             sizeof(size_t), IBV_SEND_SIGNALED);
-        endpoint_->WaitForCompletion(true, tracker);
+        endpoint_->WaitForCompletion(peer_id, true, tracker);
         remote_avail_size = (inbound_buffer_end_ - inbound_buffer_start_) -
                             GetDirtyMemorySize(remote_buffer_head_, *remote_buffer_tail_ptr_,
                                                inbound_buffer_start_, inbound_buffer_end_);
@@ -173,7 +174,8 @@ int64_t RdmaWriteMessagingEndpoint::FlushOutboundMessage(int peer_id) {
             std::make_tuple(outbound_buffer_start_, inbound_buffer_start_,
                             outbound_buffer_head_ - outbound_buffer_start_)};
 
-        track_id = endpoint_->WriteBatch(true, peer_id, requests, SignalStrategy::kSignalLast, 0).back();
+        track_id =
+            endpoint_->WriteBatch(true, peer_id, requests, SignalStrategy::kSignalLast, 0).back();
     }
 
     outbound_buffer_tail_ = outbound_buffer_head_;
@@ -181,8 +183,8 @@ int64_t RdmaWriteMessagingEndpoint::FlushOutboundMessage(int peer_id) {
     return track_id;
 }
 
-void RdmaWriteMessagingEndpoint::BlockUntilComplete(int64_t flush_id) {
-    endpoint_->WaitForCompletion(true, flush_id);
+void RdmaWriteMessagingEndpoint::BlockUntilComplete(int peer_id, int64_t flush_id) {
+    endpoint_->WaitForCompletion(peer_id, true, flush_id);
 }
 
 InboundMessage RdmaWriteMessagingEndpoint::CheckInboundMessage(int peer_id) {

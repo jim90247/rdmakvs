@@ -42,7 +42,8 @@ class IRdmaEndpoint {
                           unsigned int flags) = 0;
     virtual uint64_t Recv(size_t remote_id, uint64_t offset, uint32_t length) = 0;
     virtual void CompareAndSwap(void *addr) = 0;
-    virtual void WaitForCompletion(bool poll_until_found, uint64_t target_wr_id) = 0;
+    virtual void WaitForCompletion(size_t remote_id, bool poll_until_found,
+                                   uint64_t target_wr_id) = 0;
     virtual void ClearCompletedRecords() = 0;
     virtual ~IRdmaEndpoint();
 };
@@ -81,7 +82,7 @@ class RdmaEndpoint : public IRdmaEndpoint {
                   unsigned int flags = IBV_SEND_SIGNALED) override;
     uint64_t Recv(size_t remote_id, uint64_t offset, uint32_t length) override;
     void CompareAndSwap(void *addr) override;
-    void WaitForCompletion(bool poll_until_found, uint64_t target_wr_id) override;
+    void WaitForCompletion(size_t remote_id, bool poll_until_found, uint64_t target_wr_id) override;
     void ClearCompletedRecords() override;
 
    protected:
@@ -90,8 +91,6 @@ class RdmaEndpoint : public IRdmaEndpoint {
     struct ibv_context *ctx_;
     // Shared protected domain between all connections
     struct ibv_pd *pd_;
-    // Shared completion queue between all connections (queue pairs)
-    struct ibv_cq *cq_;
     // Shared memory region between all connections. Unless with special protocol to avoid race
     // conditions, the whole buffer should be divided into subregions, and each region should belong
     // to only one connection.
@@ -108,7 +107,9 @@ class RdmaEndpoint : public IRdmaEndpoint {
 
     struct RdmaConnection {
         // Each queue pair corresponds to a remote connection
-        struct ibv_qp *qp;
+        struct ibv_qp *qp = nullptr;
+        // Independent completion queue for each connection
+        struct ibv_cq *cq = nullptr;
         // Local information to share with remote peers
         RdmaPeerInfo local_info;
         // Remote RDMA informations
@@ -135,6 +136,7 @@ class RdmaEndpoint : public IRdmaEndpoint {
 
     struct ibv_context *GetIbContextFromDevice(const char *device_name, const uint8_t port);
     void PopulateLocalInfo(size_t peer_idx);
+    void PrepareCompletionQueue(size_t peer_idx);
     void PrepareQueuePair(size_t peer_idx);
 
     const static size_t kMaxBatchSize = 32;
@@ -147,7 +149,7 @@ class RdmaEndpoint : public IRdmaEndpoint {
     inline void FillOutWriteWorkRequest(
         struct ibv_sge *sg, struct ibv_send_wr *wr, size_t remote_id,
         const std::vector<std::tuple<uint64_t, uint64_t, uint32_t>> &requests, unsigned int flags);
-    int PostSendWithAutoReclaim(struct ibv_qp *qp, struct ibv_send_wr *wr);
+    int PostSendWithAutoReclaim(size_t remote_id, struct ibv_send_wr *wr);
 };
 
 // wait for clients to connect, implement connect and disconnect
