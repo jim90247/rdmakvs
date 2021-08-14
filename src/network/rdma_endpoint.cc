@@ -258,11 +258,12 @@ void RdmaEndpoint::InitializeFastWrite(size_t remote_id, size_t batch_size) {
     RdmaConnection &connection = connections_.at(remote_id);
 
     for (size_t i = 0; i < batch_size; i++) {
-        sg_template_[i].lkey = mr_->lkey;
+        connection.req_template.sge_template[i].lkey = mr_->lkey;
 
-        send_wr_template_[i] = {
-            .next = i == batch_size - 1 ? nullptr : &send_wr_template_[i + 1],
-            .sg_list = &sg_template_[i],
+        connection.req_template.send_wr_template[i] = {
+            .next =
+                i == batch_size - 1 ? nullptr : &connection.req_template.send_wr_template[i + 1],
+            .sg_list = &connection.req_template.sge_template[i],
             .num_sge = 1,
             .opcode = IBV_WR_RDMA_WRITE,
             .wr = {.rdma = {.rkey = connection.remote_info.memory_regions(0).remote_key()}},
@@ -271,10 +272,14 @@ void RdmaEndpoint::InitializeFastWrite(size_t remote_id, size_t batch_size) {
 }
 
 void RdmaEndpoint::FillOutWriteWorkRequest(
-    struct ibv_sge *sg, struct ibv_send_wr *wr, size_t remote_id,
-    const std::vector<std::tuple<uint64_t, uint64_t, uint32_t>> &requests, unsigned int flags) {
+    size_t remote_id, const std::vector<std::tuple<uint64_t, uint64_t, uint32_t>> &requests,
+    unsigned int flags) {
     int batch_size = requests.size();
-    auto remote_mr = connections_.at(remote_id).remote_info.memory_regions(0);
+    RdmaConnection &connection = connections_.at(remote_id);
+    auto remote_mr = connection.remote_info.memory_regions(0);
+
+    struct ibv_sge *sge = connection.req_template.sge_template;
+    struct ibv_send_wr *wr = connection.req_template.send_wr_template;
 
     for (int i = 0; i < batch_size; i++) {
         uint64_t local_offset, remote_offset;
@@ -287,8 +292,8 @@ void RdmaEndpoint::FillOutWriteWorkRequest(
         DLOG_IF(FATAL, remote_offset + length > remote_mr.size())
             << "Remote offset " << remote_offset << " out of bound";
 
-        sg[i].length = length;
-        sg[i].addr = reinterpret_cast<uint64_t>(buf_) + local_offset;
+        sge[i].length = length;
+        sge[i].addr = reinterpret_cast<uint64_t>(buf_) + local_offset;
 
         wr[i].wr_id = next_wr_id_++;
         wr[i].send_flags = flags;
@@ -298,6 +303,9 @@ void RdmaEndpoint::FillOutWriteWorkRequest(
 
 int RdmaEndpoint::PostSendWithAutoReclaim(size_t remote_id, struct ibv_send_wr *wr) {
     struct ibv_send_wr *bad_wr;
+    if (wr == nullptr) {
+        wr = connections_.at(remote_id).req_template.send_wr_template;
+    }
 
     struct ibv_qp *qp = connections_.at(remote_id).qp;
     int rc = ibv_post_send(qp, wr, &bad_wr);
@@ -322,21 +330,22 @@ uint64_t RdmaEndpoint::Write(bool initialized, size_t remote_id, uint64_t local_
     }
 
     // Fill template
-    FillOutWriteWorkRequest(sg_template_, send_wr_template_, remote_id,
-                            {std::make_tuple(local_offset, remote_offset, length)}, flags);
+    FillOutWriteWorkRequest(remote_id, {std::make_tuple(local_offset, remote_offset, length)},
+                            flags);
 
-    int rc = PostSendWithAutoReclaim(remote_id, send_wr_template_);
+    int rc = PostSendWithAutoReclaim(remote_id);
 
     DLOG_IF(ERROR, rc != 0) << "Error posting IBV_WR_RDMA_WRITE work request: " << strerror(rc);
     if (rc == 0 && (flags & IBV_SEND_SIGNALED)) num_signaled_wr_in_progress_ += 1;
 
-    return send_wr_template_[0].wr_id;
+    return connections_.at(remote_id).req_template.send_wr_template[0].wr_id;
 }
 
 std::vector<uint64_t> RdmaEndpoint::WriteBatch(
     bool initialized, size_t remote_id,
     const std::vector<std::tuple<uint64_t, uint64_t, uint32_t>> &requests,
     SignalStrategy signal_strategy, unsigned int flags) {
+    RdmaConnection &connection = connections_.at(remote_id);
     size_t batch_size = requests.size();
     DLOG_IF(FATAL, batch_size > kMaxBatchSize) << "Exceed max batch size (" << kMaxBatchSize << ")";
 
@@ -357,25 +366,25 @@ std::vector<uint64_t> RdmaEndpoint::WriteBatch(
     }
 
     // Fill template
-    FillOutWriteWorkRequest(sg_template_, send_wr_template_, remote_id, requests, flags);
+    FillOutWriteWorkRequest(remote_id, requests, flags);
+    struct ibv_send_wr *wr = connection.req_template.send_wr_template;
 
     if (signal_strategy == SignalStrategy::kSignalLast) {
-        send_wr_template_[batch_size - 1].send_flags |= IBV_SEND_SIGNALED;
+        wr[batch_size - 1].send_flags |= IBV_SEND_SIGNALED;
     }
 
-    int rc = PostSendWithAutoReclaim(remote_id, send_wr_template_);
-
+    int rc = PostSendWithAutoReclaim(remote_id);
     LOG_IF(ERROR, rc != 0) << "Error posting IBV_WR_RDMA_WRITE work request: " << strerror(rc);
 
     if (rc == 0) {
         switch (signal_strategy) {
             case SignalStrategy::kSignalLast:
                 num_signaled_wr_in_progress_ += 1;
-                wr_ids.push_back(send_wr_template_[batch_size - 1].wr_id);
+                wr_ids.push_back(wr[batch_size - 1].wr_id);
                 break;
             case SignalStrategy::kSignalAll:
                 num_signaled_wr_in_progress_ += batch_size;
-                for (int i = 0; i < batch_size; i++) wr_ids.push_back(send_wr_template_[i].wr_id);
+                for (int i = 0; i < batch_size; i++) wr_ids.push_back(wr[i].wr_id);
                 break;
             default:
                 break;

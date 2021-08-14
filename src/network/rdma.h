@@ -105,6 +105,14 @@ class RdmaEndpoint : public IRdmaEndpoint {
     void *zmq_context_;
     void *zmq_socket_;
 
+    const static size_t kMaxBatchSize = 32;
+    // These templates are filled with metadata that can be reused across multiple requests.
+    // Use these templates to reduce  request initialization overhead.
+    struct RdmaRequestTemplate {
+        struct ibv_send_wr send_wr_template[kMaxBatchSize];
+        struct ibv_sge sge_template[kMaxBatchSize];
+    };
+
     struct RdmaConnection {
         // Each queue pair corresponds to a remote connection
         struct ibv_qp *qp = nullptr;
@@ -114,6 +122,8 @@ class RdmaEndpoint : public IRdmaEndpoint {
         RdmaPeerInfo local_info;
         // Remote RDMA informations
         RdmaPeerInfo remote_info;
+        // Request templates for each connection
+        RdmaRequestTemplate req_template;
     };
     std::vector<RdmaConnection> connections_;
 
@@ -139,17 +149,11 @@ class RdmaEndpoint : public IRdmaEndpoint {
     void PrepareCompletionQueue(size_t peer_idx);
     void PrepareQueuePair(size_t peer_idx);
 
-    const static size_t kMaxBatchSize = 32;
-    struct ibv_send_wr send_wr_template_[kMaxBatchSize];
-    struct ibv_sge sg_template_[kMaxBatchSize];
-    inline void PopulateWriteWorkRequest(struct ibv_sge *sg, struct ibv_send_wr *wr,
-                                         size_t remote_id, uint64_t local_offset,
-                                         uint64_t remote_offset, uint32_t length,
-                                         struct ibv_send_wr *next, unsigned int flags);
     inline void FillOutWriteWorkRequest(
-        struct ibv_sge *sg, struct ibv_send_wr *wr, size_t remote_id,
-        const std::vector<std::tuple<uint64_t, uint64_t, uint32_t>> &requests, unsigned int flags);
-    int PostSendWithAutoReclaim(size_t remote_id, struct ibv_send_wr *wr);
+        size_t remote_id, const std::vector<std::tuple<uint64_t, uint64_t, uint32_t>> &requests,
+        unsigned int flags);
+    // TODO: update all operations to use the request template and remove the work request pointer
+    int PostSendWithAutoReclaim(size_t remote_id, struct ibv_send_wr *wr = nullptr);
 };
 
 // wait for clients to connect, implement connect and disconnect
