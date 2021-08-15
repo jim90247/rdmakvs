@@ -19,10 +19,10 @@ int main(int argc, char **argv) {
     volatile char *buffer = new volatile char[buffer_size]();
     sprintf(const_cast<char *>(buffer + 100), "this is server");
 
-    RdmaServer *endpoint =
-        new RdmaServer(nullptr, 0, reinterpret_cast<volatile unsigned char *>(buffer), buffer_size,
-                       128, 128, IBV_QPT_RC);
-    endpoint->Listen("tcp://192.168.223.1:7889");
+    RdmaServer *endpoint = new RdmaServer("tcp://192.168.223.1:7889", nullptr, 0,
+                                          reinterpret_cast<volatile unsigned char *>(buffer),
+                                          buffer_size, 128, 128, IBV_QPT_RC);
+    endpoint->Listen();
 
     uint64_t wr_id, wr_id2;
     const int kBatchSize = 4;

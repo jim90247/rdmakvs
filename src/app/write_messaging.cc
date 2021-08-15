@@ -34,8 +34,9 @@ const size_t kLatencyMeasurePeriod = 101;
 
 void ServerMain() {
     volatile unsigned char *buffer = new volatile unsigned char[kBufferSize]();
-    RdmaServer *rdma_server = new RdmaServer(nullptr, 0, buffer, kBufferSize, 128, 128, IBV_QPT_RC);
-    rdma_server->Listen(FLAGS_endpoint.c_str());
+    RdmaServer *rdma_server = new RdmaServer(FLAGS_endpoint.c_str(), nullptr, 0, buffer,
+                                             kBufferSize, 128, 128, IBV_QPT_RC);
+    rdma_server->Listen();
     rdmamsg::RdmaWriteMessagingEndpoint *msg_ep =
         new rdmamsg::RdmaWriteMessagingEndpoint(rdma_server, buffer, kBufferSize);
 

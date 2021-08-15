@@ -114,6 +114,8 @@ class RdmaEndpoint : public IRdmaEndpoint {
     };
 
     // Work request usage status of a RDMA connection
+    // TODO: supports multiple threads per connection. Use case includes multiple threads accessing
+    // the same remote using the same connection.
     struct RdmaWorkRequestStatus {
         // Next work request id
         uint64_t next_wr_id = 0;
@@ -167,11 +169,11 @@ class RdmaEndpoint : public IRdmaEndpoint {
 // wait for clients to connect, implement connect and disconnect
 class RdmaServer : public RdmaEndpoint {
    public:
-    RdmaServer(char *ib_dev_name, uint8_t ib_dev_port, volatile unsigned char *buffer,
-               size_t buffer_size, uint32_t max_send_count, uint32_t max_recv_count,
-               ibv_qp_type qp_type);
+    RdmaServer(const char *endpoint, char *ib_dev_name, uint8_t ib_dev_port,
+               volatile unsigned char *buffer, size_t buffer_size, uint32_t max_send_count,
+               uint32_t max_recv_count, ibv_qp_type qp_type);
     ~RdmaServer();
-    void Listen(const char *endpoint);
+    void Listen();
 };
 
 // connect to an rdma server

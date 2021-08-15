@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.10)
 project(app)
 
 add_executable(rdma_demo rdma_endpoint_demo.cc)
-target_link_libraries(rdma_demo network glog gflags)
+target_link_libraries(rdma_demo network glog gflags pthread)
 install(TARGETS rdma_demo DESTINATION ${RDMAKVS_INSTALL_BIN_DIR}/app)
 
 add_executable(write_msg write_messaging.cc)
