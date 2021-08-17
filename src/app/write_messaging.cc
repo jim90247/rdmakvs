@@ -34,8 +34,9 @@ const size_t kLatencyMeasurePeriod = 101;
 
 void ServerMain() {
     volatile unsigned char *buffer = new volatile unsigned char[kBufferSize]();
-    RdmaServer *rdma_server = new RdmaServer(nullptr, 0, buffer, kBufferSize, 128, 128, IBV_QPT_RC);
-    rdma_server->Listen(FLAGS_endpoint.c_str());
+    RdmaServer *rdma_server = new RdmaServer(FLAGS_endpoint.c_str(), nullptr, 0, buffer,
+                                             kBufferSize, 128, 128, IBV_QPT_RC);
+    rdma_server->Listen();
     rdmamsg::RdmaWriteMessagingEndpoint *msg_ep =
         new rdmamsg::RdmaWriteMessagingEndpoint(rdma_server, buffer, kBufferSize);
 
@@ -52,15 +53,15 @@ void ServerMain() {
         }
 
         if (++refresh_round >= FLAGS_inbound_gc_period) {
-            msg_ep->ReleaseInboundMessageBuffer();
+            msg_ep->ReleaseInboundMessageBuffer(0);
             refresh_round = 0;
         }
 
         // Send response
         *reinterpret_cast<volatile unsigned long *>(
-            msg_ep->AllocateOutboundMessageBuffer(sizeof(unsigned long))) = round;
+            msg_ep->AllocateOutboundMessageBuffer(0, sizeof(unsigned long))) = round;
         if (++flush_round >= FLAGS_outbound_batch) {
-            msg_ep->FlushOutboundMessage();
+            msg_ep->FlushOutboundMessage(0);
             flush_round = 0;
         }
     }
@@ -88,10 +89,10 @@ void ClientMain() {
         // Send request
         if (sent_round < FLAGS_round) {
             *reinterpret_cast<volatile unsigned long *>(
-                msg_ep->AllocateOutboundMessageBuffer(sizeof(unsigned long))) = sent_round;
+                msg_ep->AllocateOutboundMessageBuffer(0, sizeof(unsigned long))) = sent_round;
             sent_round++;
             if (++flush_round >= FLAGS_outbound_batch) {
-                msg_ep->FlushOutboundMessage();
+                msg_ep->FlushOutboundMessage(0);
                 flush_round = 0;
             }
             if (++latency_measure_send_round >= kLatencyMeasurePeriod) {
@@ -114,7 +115,7 @@ void ClientMain() {
                 latency_measure_recv_round = 0;
             }
             if (++refresh_round >= FLAGS_inbound_gc_period) {
-                msg_ep->ReleaseInboundMessageBuffer();
+                msg_ep->ReleaseInboundMessageBuffer(0);
                 refresh_round = 0;
             }
         }

@@ -19,10 +19,10 @@ int main(int argc, char **argv) {
     volatile char *buffer = new volatile char[buffer_size]();
     sprintf(const_cast<char *>(buffer + 100), "this is server");
 
-    RdmaServer *endpoint =
-        new RdmaServer(nullptr, 0, reinterpret_cast<volatile unsigned char *>(buffer), buffer_size,
-                       128, 128, IBV_QPT_RC);
-    endpoint->Listen("tcp://192.168.223.1:7889");
+    RdmaServer *endpoint = new RdmaServer("tcp://192.168.223.1:7889", nullptr, 0,
+                                          reinterpret_cast<volatile unsigned char *>(buffer),
+                                          buffer_size, 128, 128, IBV_QPT_RC);
+    endpoint->Listen();
 
     uint64_t wr_id, wr_id2;
     const int kBatchSize = 4;
@@ -153,7 +153,7 @@ int main(int argc, char **argv) {
             batch[i] = std::make_tuple(offset, offset, message_size);
         }
         if (b % (64 / kBatchSize) == 0) {
-            if (b > 0) endpoint->WaitForCompletion(true, wr_id);
+            if (b > 0) endpoint->WaitForCompletion(0, true, wr_id);
             wr_id =
                 endpoint->WriteBatch(true, 0, batch, SignalStrategy::kSignalLast, IBV_SEND_INLINE)
                     .back();
@@ -161,7 +161,7 @@ int main(int argc, char **argv) {
             endpoint->WriteBatch(true, 0, batch, SignalStrategy::kSignalNone, IBV_SEND_INLINE);
         }
     }
-    endpoint->WaitForCompletion(true, wr_id);
+    endpoint->WaitForCompletion(0, true, wr_id);
 
     auto end_tuple2 = std::chrono::steady_clock::now();
 

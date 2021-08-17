@@ -21,8 +21,9 @@ RdmaEndpoint::RdmaEndpoint(char *ib_dev_name, uint8_t ib_dev_port, volatile unsi
     : ib_dev_port_(ib_dev_port),
       buf_(buffer),
       buf_size_(buffer_size),
-      next_wr_id_(0),
-      num_signaled_wr_in_progress_(0),
+      max_send_count_(max_send_count),
+      max_recv_count_(max_recv_count),
+      qp_type_(qp_type),
       zmq_socket_(nullptr) {
     CHECK(buf_ != nullptr) << "Provided buffer pointer is a nullptr";
 
@@ -42,22 +43,16 @@ RdmaEndpoint::RdmaEndpoint(char *ib_dev_name, uint8_t ib_dev_port, volatile unsi
     mr_ = ibv_reg_mr(pd_, const_cast<unsigned char *>(buf_), buf_size_,
                      IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_WRITE);
     CHECK(mr_ != nullptr) << "Failed to register memory region";
-
-    cq_ = ibv_create_cq(ctx_, max_send_count + max_recv_count, nullptr, nullptr, 0);
-    CHECK(cq_ != nullptr) << "Failed to create completion queue";
-
-    qp_ = PrepareQueuePair(max_send_count, max_recv_count, qp_type);
-    LOG(INFO) << "Queue pair is ready for connection";
-
-    PopulateLocalInfo();
 }
 
 RdmaEndpoint::~RdmaEndpoint() {
-    if (qp_ != nullptr) {
-        ibv_destroy_qp(qp_);
-    }
-    if (cq_ != nullptr) {
-        ibv_destroy_cq(cq_);
+    for (RdmaConnection &connection : connections_) {
+        if (connection.qp != nullptr) {
+            ibv_destroy_qp(connection.qp);
+        }
+        if (connection.cq != nullptr) {
+            ibv_destroy_cq(connection.cq);
+        }
     }
     if (mr_ != nullptr) {
         ibv_dereg_mr(mr_);
@@ -124,7 +119,17 @@ struct ibv_context *RdmaEndpoint::GetIbContextFromDevice(const char *target_devi
     return nullptr;
 }
 
-void RdmaEndpoint::PopulateLocalInfo() {
+size_t RdmaEndpoint::PrepareNewConnection() {
+    size_t new_peer_idx = connections_.size();
+    connections_.push_back(RdmaConnection());
+
+    PrepareCompletionQueue(new_peer_idx);
+    PrepareQueuePair(new_peer_idx);
+    PopulateLocalInfo(new_peer_idx);
+    return new_peer_idx;
+}
+
+void RdmaEndpoint::PopulateLocalInfo(size_t peer_idx) {
     // For packet serial number generation. Following the implementation in perftest to use random
     // numbers.
     // Using lrand48() & 0xffffff will result in a bug that set_packet_serial_number() does not set
@@ -132,36 +137,48 @@ void RdmaEndpoint::PopulateLocalInfo() {
     static thread_local std::mt19937 generator;
     std::uniform_int_distribution<uint32_t> distribution(0, 1 << 20);
 
-    RdmaPeerQueuePairInfo *qp_info = local_info_.mutable_queue_pair();
-    qp_info->set_queue_pair_number(qp_->qp_num);
+    RdmaConnection &connection = connections_.at(peer_idx);
+
+    RdmaPeerQueuePairInfo *qp_info = connection.local_info.mutable_queue_pair();
+    qp_info->set_queue_pair_number(connection.qp->qp_num);
     qp_info->set_packet_serial_number(distribution(generator));
     qp_info->set_local_identifier(ib_dev_port_info_.lid);
 
-    RdmaPeerMemoryRegionInfo *mr_info = local_info_.add_memory_regions();
+    RdmaPeerMemoryRegionInfo *mr_info = connection.local_info.add_memory_regions();
     mr_info->set_address(reinterpret_cast<uint64_t>(mr_->addr));
     mr_info->set_remote_key(mr_->rkey);
     mr_info->set_size(buf_size_);
 
-    LOG(INFO) << "Local information to share with peers: " << local_info_.ShortDebugString();
+    DLOG(INFO) << "Local information to share with peers: "
+               << connection.local_info.ShortDebugString() << " (connection index: " << peer_idx
+               << ")";
 }
 
-struct ibv_qp *RdmaEndpoint::PrepareQueuePair(uint32_t max_send_count, uint32_t max_recv_count,
-                                              ibv_qp_type qp_type) {
+void RdmaEndpoint::PrepareCompletionQueue(size_t peer_idx) {
+    RdmaConnection &connection = connections_.at(peer_idx);
+    connection.cq = ibv_create_cq(ctx_, max_send_count_ + max_recv_count_, nullptr, nullptr, 0);
+    CHECK(connection.cq != nullptr) << "Failed to create completion queue";
+}
+
+void RdmaEndpoint::PrepareQueuePair(size_t peer_idx) {
+    RdmaConnection &connection = connections_.at(peer_idx);
+    CHECK(connection.cq != nullptr) << "Completion queue of connection " << peer_idx
+                                    << " should be initialized before queue pair setup";
     struct ibv_qp_init_attr qp_init_attr = {
-        .send_cq = cq_,
-        .recv_cq = cq_,
+        .send_cq = connection.cq,
+        .recv_cq = connection.cq,
         .cap =
             {
-                .max_send_wr = max_send_count,
-                .max_recv_wr = max_recv_count,
+                .max_send_wr = max_send_count_,
+                .max_recv_wr = max_recv_count_,
                 .max_send_sge = 1,
                 .max_recv_sge = 1,
             },
-        .qp_type = qp_type,
+        .qp_type = qp_type_,
     };
 
-    struct ibv_qp *qp = ibv_create_qp(pd_, &qp_init_attr);
-    CHECK(qp != nullptr) << "Failed to create queue pair";
+    connection.qp = ibv_create_qp(pd_, &qp_init_attr);
+    CHECK(connection.qp != nullptr) << "Failed to create queue pair";
 
     struct ibv_qp_attr qp_attr = {
         .qp_state = IBV_QPS_INIT,
@@ -170,17 +187,16 @@ struct ibv_qp *RdmaEndpoint::PrepareQueuePair(uint32_t max_send_count, uint32_t 
         .port_num = ib_dev_port_,
     };
 
-    CHECK_EQ(ibv_modify_qp(qp, &qp_attr,
+    CHECK_EQ(ibv_modify_qp(connection.qp, &qp_attr,
                            IBV_QP_STATE | IBV_QP_PKEY_INDEX | IBV_QP_PORT | IBV_QP_ACCESS_FLAGS),
              0)
         << "Failed to modify queue pair to INIT";
-    return qp;
 }
 
-size_t RdmaEndpoint::ExchangePeerInfo(void *zmq_socket, bool send_first) {
+void RdmaEndpoint::ExchangePeerInfo(size_t peer_idx, bool send_first) {
     char remote_info_cstr[kZmqMessageBufferSize];
-    RdmaPeerInfo remote_info;
-    std::string local_info_str = local_info_.SerializeAsString();
+    RdmaConnection &connection = connections_.at(peer_idx);
+    std::string local_info_str = connection.local_info.SerializeAsString();
 
     if (send_first) {
         zmq_send(zmq_socket_, local_info_str.data(), local_info_str.size(), 0);
@@ -190,24 +206,23 @@ size_t RdmaEndpoint::ExchangePeerInfo(void *zmq_socket, bool send_first) {
         zmq_send(zmq_socket_, local_info_str.data(), local_info_str.size(), 0);
     }
 
-    remote_info.ParseFromString(remote_info_cstr);
-    remote_info_.push_back(remote_info);
+    connection.remote_info.ParseFromString(remote_info_cstr);
 
-    LOG(INFO) << "Remote peer " << remote_info_.size() - 1
-              << " information: " << remote_info.ShortDebugString();
-
-    return remote_info_.size() - 1;
+    DLOG(INFO) << "Remote peer " << peer_idx
+               << " information: " << connection.remote_info.ShortDebugString();
 }
 
-void RdmaEndpoint::ConnectQueuePair(ibv_qp *qp, RdmaPeerQueuePairInfo remote_qp_info) {
+void RdmaEndpoint::ConnectPeer(size_t peer_idx) {
+    RdmaConnection &connection = connections_.at(peer_idx);
     struct ibv_qp_attr qp_attr = {
         .qp_state = IBV_QPS_RTR,
         .path_mtu = IBV_MTU_4096,
-        .rq_psn = remote_qp_info.packet_serial_number(),
-        .dest_qp_num = remote_qp_info.queue_pair_number(),
+        .rq_psn = connection.remote_info.queue_pair().packet_serial_number(),
+        .dest_qp_num = connection.remote_info.queue_pair().queue_pair_number(),
         .ah_attr =
             {
-                .dlid = static_cast<uint16_t>(remote_qp_info.local_identifier()),
+                .dlid =
+                    static_cast<uint16_t>(connection.remote_info.queue_pair().local_identifier()),
                 .sl = 0,
                 .src_path_bits = 0,
                 .is_global = 0,
@@ -217,7 +232,7 @@ void RdmaEndpoint::ConnectQueuePair(ibv_qp *qp, RdmaPeerQueuePairInfo remote_qp_
         .min_rnr_timer = 12,
     };
 
-    CHECK_EQ(ibv_modify_qp(qp, &qp_attr,
+    CHECK_EQ(ibv_modify_qp(connection.qp, &qp_attr,
                            IBV_QP_STATE | IBV_QP_PATH_MTU | IBV_QP_DEST_QPN | IBV_QP_RQ_PSN |
                                IBV_QP_MAX_DEST_RD_ATOMIC | IBV_QP_MIN_RNR_TIMER | IBV_QP_AV),
              0)
@@ -227,9 +242,9 @@ void RdmaEndpoint::ConnectQueuePair(ibv_qp *qp, RdmaPeerQueuePairInfo remote_qp_
     qp_attr.timeout = 14;
     qp_attr.retry_cnt = 7;
     qp_attr.rnr_retry = 7;
-    qp_attr.sq_psn = local_info_.queue_pair().packet_serial_number();
+    qp_attr.sq_psn = connection.local_info.queue_pair().packet_serial_number();
     qp_attr.max_rd_atomic = 1;
-    CHECK_EQ(ibv_modify_qp(qp, &qp_attr,
+    CHECK_EQ(ibv_modify_qp(connection.qp, &qp_attr,
                            IBV_QP_STATE | IBV_QP_TIMEOUT | IBV_QP_RETRY_CNT | IBV_QP_RNR_RETRY |
                                IBV_QP_SQ_PSN | IBV_QP_MAX_QP_RD_ATOMIC),
              0)
@@ -237,26 +252,32 @@ void RdmaEndpoint::ConnectQueuePair(ibv_qp *qp, RdmaPeerQueuePairInfo remote_qp_
 }
 
 void RdmaEndpoint::InitializeFastWrite(size_t remote_id, size_t batch_size) {
-    CHECK_LT(remote_id, remote_info_.size()) << "Remote id " << remote_id << " out of bound";
     CHECK_LE(batch_size, kMaxBatchSize) << "Exceed max batch size (" << kMaxBatchSize << ")";
+    RdmaConnection &connection = connections_.at(remote_id);
 
     for (size_t i = 0; i < batch_size; i++) {
-        sg_template_[i].lkey = mr_->lkey;
+        connection.req_template.sge_template[i].lkey = mr_->lkey;
 
-        send_wr_template_[i] = {
-            .next = i == batch_size - 1 ? nullptr : &send_wr_template_[i + 1],
-            .sg_list = &sg_template_[i],
+        connection.req_template.send_wr_template[i] = {
+            .next =
+                i == batch_size - 1 ? nullptr : &connection.req_template.send_wr_template[i + 1],
+            .sg_list = &connection.req_template.sge_template[i],
             .num_sge = 1,
             .opcode = IBV_WR_RDMA_WRITE,
-            .wr = {.rdma = {.rkey = remote_info_[remote_id].memory_regions(0).remote_key()}},
+            .wr = {.rdma = {.rkey = connection.remote_info.memory_regions(0).remote_key()}},
         };
     }
 }
 
 void RdmaEndpoint::FillOutWriteWorkRequest(
-    struct ibv_sge *sg, struct ibv_send_wr *wr, size_t remote_id,
-    const std::vector<std::tuple<uint64_t, uint64_t, uint32_t>> &requests, unsigned int flags) {
+    size_t remote_id, const std::vector<std::tuple<uint64_t, uint64_t, uint32_t>> &requests,
+    unsigned int flags) {
     int batch_size = requests.size();
+    RdmaConnection &connection = connections_.at(remote_id);
+    auto remote_mr = connection.remote_info.memory_regions(0);
+
+    struct ibv_sge *sge = connection.req_template.sge_template;
+    struct ibv_send_wr *wr = connection.req_template.send_wr_template;
 
     for (int i = 0; i < batch_size; i++) {
         uint64_t local_offset, remote_offset;
@@ -266,22 +287,25 @@ void RdmaEndpoint::FillOutWriteWorkRequest(
         // Use debug logging to reduce performance impact
         DLOG_IF(FATAL, local_offset + length > buf_size_)
             << "Local offset " << local_offset << "out of bound";
-        DLOG_IF(FATAL, remote_offset + length > remote_info_[remote_id].memory_regions(0).size())
+        DLOG_IF(FATAL, remote_offset + length > remote_mr.size())
             << "Remote offset " << remote_offset << " out of bound";
 
-        sg[i].length = length;
-        sg[i].addr = reinterpret_cast<uint64_t>(buf_) + local_offset;
+        sge[i].length = length;
+        sge[i].addr = reinterpret_cast<uint64_t>(buf_) + local_offset;
 
-        wr[i].wr_id = next_wr_id_++;
+        wr[i].wr_id = connection.wr_status.next_wr_id++;
         wr[i].send_flags = flags;
-        wr[i].wr.rdma.remote_addr =
-            remote_info_[remote_id].memory_regions(0).address() + remote_offset;
+        wr[i].wr.rdma.remote_addr = remote_mr.address() + remote_offset;
     }
 }
 
-int RdmaEndpoint::PostSendWithAutoReclaim(struct ibv_qp *qp, struct ibv_send_wr *wr) {
+int RdmaEndpoint::PostSendWithAutoReclaim(size_t remote_id, struct ibv_send_wr *wr) {
     struct ibv_send_wr *bad_wr;
+    if (wr == nullptr) {
+        wr = connections_.at(remote_id).req_template.send_wr_template;
+    }
 
+    struct ibv_qp *qp = connections_.at(remote_id).qp;
     int rc = ibv_post_send(qp, wr, &bad_wr);
 
     // Automatic reclaim is not as efficient as manual reclaim.
@@ -289,7 +313,7 @@ int RdmaEndpoint::PostSendWithAutoReclaim(struct ibv_qp *qp, struct ibv_send_wr 
     // reclaim for better performance.
     while (rc == ENOMEM) {
         // Reclaim some completion queue resources
-        WaitForCompletion(false, 0);
+        WaitForCompletion(remote_id, false, 0);
         // Retry from the last failed one
         rc = ibv_post_send(qp, bad_wr, &bad_wr);
     }
@@ -299,32 +323,29 @@ int RdmaEndpoint::PostSendWithAutoReclaim(struct ibv_qp *qp, struct ibv_send_wr 
 
 uint64_t RdmaEndpoint::Write(bool initialized, size_t remote_id, uint64_t local_offset,
                              uint64_t remote_offset, uint32_t length, unsigned int flags) {
-    DLOG_IF(FATAL, remote_id >= remote_info_.size())
-        << "Remote id " << remote_id << " out of bound";
-
     if (!initialized) {
         InitializeFastWrite(remote_id, 1);
     }
 
     // Fill template
-    FillOutWriteWorkRequest(sg_template_, send_wr_template_, remote_id,
-                            {std::make_tuple(local_offset, remote_offset, length)}, flags);
+    FillOutWriteWorkRequest(remote_id, {std::make_tuple(local_offset, remote_offset, length)},
+                            flags);
 
-    int rc = PostSendWithAutoReclaim(qp_, send_wr_template_);
+    int rc = PostSendWithAutoReclaim(remote_id);
 
     DLOG_IF(ERROR, rc != 0) << "Error posting IBV_WR_RDMA_WRITE work request: " << strerror(rc);
-    if (rc == 0 && (flags & IBV_SEND_SIGNALED)) num_signaled_wr_in_progress_ += 1;
+    if (rc == 0 && (flags & IBV_SEND_SIGNALED)) {
+        connections_.at(remote_id).wr_status.in_progress_signaled_wrs++;
+    }
 
-    return send_wr_template_[0].wr_id;
+    return connections_.at(remote_id).req_template.send_wr_template[0].wr_id;
 }
 
 std::vector<uint64_t> RdmaEndpoint::WriteBatch(
     bool initialized, size_t remote_id,
     const std::vector<std::tuple<uint64_t, uint64_t, uint32_t>> &requests,
     SignalStrategy signal_strategy, unsigned int flags) {
-    DLOG_IF(FATAL, remote_id >= remote_info_.size())
-        << "Remote id " << remote_id << " out of bound";
-
+    RdmaConnection &connection = connections_.at(remote_id);
     size_t batch_size = requests.size();
     DLOG_IF(FATAL, batch_size > kMaxBatchSize) << "Exceed max batch size (" << kMaxBatchSize << ")";
 
@@ -345,25 +366,25 @@ std::vector<uint64_t> RdmaEndpoint::WriteBatch(
     }
 
     // Fill template
-    FillOutWriteWorkRequest(sg_template_, send_wr_template_, remote_id, requests, flags);
+    FillOutWriteWorkRequest(remote_id, requests, flags);
+    struct ibv_send_wr *wr = connection.req_template.send_wr_template;
 
     if (signal_strategy == SignalStrategy::kSignalLast) {
-        send_wr_template_[batch_size - 1].send_flags |= IBV_SEND_SIGNALED;
+        wr[batch_size - 1].send_flags |= IBV_SEND_SIGNALED;
     }
 
-    int rc = PostSendWithAutoReclaim(qp_, send_wr_template_);
-
+    int rc = PostSendWithAutoReclaim(remote_id);
     LOG_IF(ERROR, rc != 0) << "Error posting IBV_WR_RDMA_WRITE work request: " << strerror(rc);
 
     if (rc == 0) {
         switch (signal_strategy) {
             case SignalStrategy::kSignalLast:
-                num_signaled_wr_in_progress_ += 1;
-                wr_ids.push_back(send_wr_template_[batch_size - 1].wr_id);
+                connection.wr_status.in_progress_signaled_wrs += 1;
+                wr_ids.push_back(wr[batch_size - 1].wr_id);
                 break;
             case SignalStrategy::kSignalAll:
-                num_signaled_wr_in_progress_ += batch_size;
-                for (int i = 0; i < batch_size; i++) wr_ids.push_back(send_wr_template_[i].wr_id);
+                connection.wr_status.in_progress_signaled_wrs += batch_size;
+                for (int i = 0; i < batch_size; i++) wr_ids.push_back(wr[i].wr_id);
                 break;
             default:
                 break;
@@ -375,11 +396,11 @@ std::vector<uint64_t> RdmaEndpoint::WriteBatch(
 
 uint64_t RdmaEndpoint::Read(size_t remote_id, uint64_t local_offset, uint64_t remote_offset,
                             uint32_t length, unsigned int flags) {
-    DLOG_IF(FATAL, remote_id >= remote_info_.size())
-        << "Remote id " << remote_id << " out of bound";
+    RdmaConnection &connection = connections_.at(remote_id);
+    auto remote_mr = connection.remote_info.memory_regions(0);
     DLOG_IF(FATAL, local_offset + length > buf_size_)
         << "Local offset " << local_offset << "out of bound";
-    DLOG_IF(FATAL, remote_offset + length > remote_info_[remote_id].memory_regions(0).size())
+    DLOG_IF(FATAL, remote_offset + length > remote_mr.size())
         << "Remote offset " << remote_offset << " out of bound";
 
     struct ibv_sge sg = {
@@ -389,7 +410,7 @@ uint64_t RdmaEndpoint::Read(size_t remote_id, uint64_t local_offset, uint64_t re
     };
 
     struct ibv_send_wr wr = {
-        .wr_id = next_wr_id_++,
+        .wr_id = connection.wr_status.next_wr_id++,
         .next = nullptr,
         .sg_list = &sg,
         .num_sge = 1,
@@ -399,22 +420,25 @@ uint64_t RdmaEndpoint::Read(size_t remote_id, uint64_t local_offset, uint64_t re
             {
                 .rdma =
                     {
-                        .remote_addr =
-                            remote_info_[remote_id].memory_regions(0).address() + remote_offset,
-                        .rkey = remote_info_[remote_id].memory_regions(0).remote_key(),
+                        .remote_addr = remote_mr.address() + remote_offset,
+                        .rkey = remote_mr.remote_key(),
                     },
             },
     };
-    int rc = PostSendWithAutoReclaim(qp_, &wr);
+    int rc = PostSendWithAutoReclaim(remote_id, &wr);
 
     LOG_IF(ERROR, rc != 0) << "Error posting IBV_WR_RDMA_WRITE work request: " << strerror(rc);
-    if (rc == 0 && (flags & IBV_SEND_SIGNALED)) num_signaled_wr_in_progress_ += 1;
+    if (rc == 0 && (flags & IBV_SEND_SIGNALED)) {
+        connection.wr_status.in_progress_signaled_wrs += 1;
+    }
 
     return wr.wr_id;
 }
 
-uint64_t RdmaEndpoint::Send(uint64_t offset, uint32_t length, unsigned int flags) {
+uint64_t RdmaEndpoint::Send(size_t remote_id, uint64_t offset, uint32_t length,
+                            unsigned int flags) {
     DLOG_IF(FATAL, offset + length >= buf_size_) << "Local offset " << offset << "out of bound";
+    RdmaWorkRequestStatus &wr_status = connections_.at(remote_id).wr_status;
 
     struct ibv_sge sg = {
         .addr = reinterpret_cast<uint64_t>(buf_) + offset,
@@ -423,7 +447,7 @@ uint64_t RdmaEndpoint::Send(uint64_t offset, uint32_t length, unsigned int flags
     };
 
     struct ibv_send_wr wr = {
-        .wr_id = next_wr_id_++,
+        .wr_id = wr_status.next_wr_id++,
         .next = nullptr,
         .sg_list = &sg,
         .num_sge = 1,
@@ -431,16 +455,19 @@ uint64_t RdmaEndpoint::Send(uint64_t offset, uint32_t length, unsigned int flags
         .send_flags = flags,
     };
 
-    int rc = PostSendWithAutoReclaim(qp_, &wr);
+    int rc = PostSendWithAutoReclaim(remote_id, &wr);
 
     LOG_IF(ERROR, rc != 0) << "Error posting IBV_WR_SEND work request: " << strerror(rc);
-    if (rc == 0 && (flags & IBV_SEND_SIGNALED)) num_signaled_wr_in_progress_ += 1;
+    if (rc == 0 && (flags & IBV_SEND_SIGNALED)) wr_status.in_progress_signaled_wrs += 1;
 
     return wr.wr_id;
 }
 
-uint64_t RdmaEndpoint::Recv(uint64_t offset, uint32_t length) {
+uint64_t RdmaEndpoint::Recv(size_t remote_id, uint64_t offset, uint32_t length) {
+    // TODO: consider using shared receive queue?
     DLOG_IF(FATAL, offset + length >= buf_size_) << "Local offset " << offset << "out of bound";
+
+    RdmaWorkRequestStatus &wr_status = connections_.at(remote_id).wr_status;
 
     struct ibv_sge sg = {
         .addr = reinterpret_cast<uint64_t>(buf_) + offset,
@@ -449,31 +476,38 @@ uint64_t RdmaEndpoint::Recv(uint64_t offset, uint32_t length) {
     };
 
     struct ibv_recv_wr *bad_wr, wr = {
-                                    .wr_id = next_wr_id_++,
+                                    .wr_id = wr_status.next_wr_id++,
                                     .next = nullptr,
                                     .sg_list = &sg,
                                     .num_sge = 1,
                                 };
 
-    int rc = ibv_post_recv(qp_, &wr, &bad_wr);
+    int rc = ibv_post_recv(connections_.at(remote_id).qp, &wr, &bad_wr);
 
     LOG_IF(ERROR, rc != 0) << "Error posting recv wr: " << strerror(rc);
-    if (rc == 0) num_signaled_wr_in_progress_ += 1;
+    if (rc == 0) wr_status.in_progress_signaled_wrs += 1;
 
     return wr.wr_id;
 }
 
-void RdmaEndpoint::CompareAndSwap(void *addr) {}
+void RdmaEndpoint::CompareAndSwap(void *addr) { LOG(FATAL) << "CompareAndSwap is not implemented"; }
 
-void RdmaEndpoint::WaitForCompletion(bool poll_until_found, uint64_t target_wr_id) {
+void RdmaEndpoint::WaitForCompletion(size_t remote_id, bool poll_until_found,
+                                     uint64_t target_wr_id) {
+    RdmaWorkRequestStatus &wr_status = connections_.at(remote_id).wr_status;
     // Early exit if target work request already completed
-    if (poll_until_found && completed_wr_.find(target_wr_id) != completed_wr_.end()) return;
+    if (poll_until_found &&
+        wr_status.completed_wr_ids.find(target_wr_id) != wr_status.completed_wr_ids.end()) {
+        return;
+    }
 
-    const int kBatch = 32;
+    struct ibv_cq *cq = connections_.at(remote_id).cq;
+
+    const static int kBatch = 32;
     struct ibv_wc wc_list[kBatch];
     int n = 0;
     do {
-        n = ibv_poll_cq(cq_, kBatch, wc_list);
+        n = ibv_poll_cq(cq, kBatch, wc_list);
 
         CHECK_GE(n, 0) << "Error polling completion queue " << n;
 
@@ -482,12 +516,14 @@ void RdmaEndpoint::WaitForCompletion(bool poll_until_found, uint64_t target_wr_i
                 << "Work request " << wc_list[i].wr_id
                 << " completed with error: " << ibv_wc_status_str(wc_list[i].status);
             // TODO: Use a more efficient way to store completed work request
-            completed_wr_.insert(wc_list[i].wr_id);
-            num_signaled_wr_in_progress_--;
+            wr_status.completed_wr_ids.insert(wc_list[i].wr_id);
+            wr_status.in_progress_signaled_wrs--;
         }
-    } while (
-        num_signaled_wr_in_progress_ > 0 &&
-        (n == 0 || (poll_until_found && completed_wr_.find(target_wr_id) == completed_wr_.end())));
+    } while (wr_status.in_progress_signaled_wrs > 0 &&
+             (n == 0 || (poll_until_found && wr_status.completed_wr_ids.find(target_wr_id) ==
+                                                 wr_status.completed_wr_ids.end())));
 }
 
-void RdmaEndpoint::ClearCompletedRecords() { completed_wr_.clear(); }
+void RdmaEndpoint::ClearCompletedRecords(size_t remote_id) {
+    connections_.at(remote_id).wr_status.completed_wr_ids.clear();
+}

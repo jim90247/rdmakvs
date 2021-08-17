@@ -38,11 +38,13 @@ class IRdmaEndpoint {
         SignalStrategy signal_strategy, unsigned int flags) = 0;
     virtual uint64_t Read(size_t remote_id, uint64_t local_offset, uint64_t remote_offset,
                           uint32_t length, unsigned int flags) = 0;
-    virtual uint64_t Send(uint64_t offset, uint32_t length, unsigned int flags) = 0;
-    virtual uint64_t Recv(uint64_t offset, uint32_t length) = 0;
+    virtual uint64_t Send(size_t remote_id, uint64_t offset, uint32_t length,
+                          unsigned int flags) = 0;
+    virtual uint64_t Recv(size_t remote_id, uint64_t offset, uint32_t length) = 0;
     virtual void CompareAndSwap(void *addr) = 0;
-    virtual void WaitForCompletion(bool poll_until_found, uint64_t target_wr_id) = 0;
-    virtual void ClearCompletedRecords() = 0;
+    virtual void WaitForCompletion(size_t remote_id, bool poll_until_found,
+                                   uint64_t target_wr_id) = 0;
+    virtual void ClearCompletedRecords(size_t remote_id) = 0;
     virtual ~IRdmaEndpoint();
 };
 
@@ -76,66 +78,102 @@ class RdmaEndpoint : public IRdmaEndpoint {
         SignalStrategy signal_strategy, unsigned int flags = 0) override;
     uint64_t Read(size_t remote_id, uint64_t local_offset, uint64_t remote_offset, uint32_t length,
                   unsigned int flags = IBV_SEND_SIGNALED) override;
-    uint64_t Send(uint64_t offset, uint32_t length,
+    uint64_t Send(size_t remote_id, uint64_t offset, uint32_t length,
                   unsigned int flags = IBV_SEND_SIGNALED) override;
-    uint64_t Recv(uint64_t offset, uint32_t length) override;
+    uint64_t Recv(size_t remote_id, uint64_t offset, uint32_t length) override;
     void CompareAndSwap(void *addr) override;
-    void WaitForCompletion(bool poll_until_found, uint64_t target_wr_id) override;
-    void ClearCompletedRecords() override;
+    void WaitForCompletion(size_t remote_id, bool poll_until_found, uint64_t target_wr_id) override;
+    void ClearCompletedRecords(size_t remote_id) override;
 
    protected:
     uint8_t ib_dev_port_;
     struct ibv_port_attr ib_dev_port_info_;
     struct ibv_context *ctx_;
+    // Shared protected domain between all connections
     struct ibv_pd *pd_;
-    struct ibv_cq *cq_;
-    struct ibv_qp *qp_;
+    // Shared memory region between all connections. Unless with special protocol to avoid race
+    // conditions, the whole buffer should be divided into subregions, and each region should belong
+    // to only one connection.
     struct ibv_mr *mr_;
 
-    volatile unsigned char *buf_;  // Buffer associated with local memory region
-    size_t buf_size_;              // Size of the buffer associated with local memory region
+    // Buffer associated with local memory region
+    volatile unsigned char *buf_;
+    // Size of the buffer associated with local memory region
+    size_t buf_size_;
 
     const static size_t kZmqMessageBufferSize = 1024;
     void *zmq_context_;
     void *zmq_socket_;
-    RdmaPeerInfo local_info_;  // Local information to share with remote peers
-    std::vector<RdmaPeerInfo> remote_info_;
-
-    void PopulateLocalInfo();
-    size_t ExchangePeerInfo(void *zmq_socket, bool send_first);
-
-    struct ibv_qp *PrepareQueuePair(uint32_t max_send_count, uint32_t max_recv_count,
-                                    ibv_qp_type qp_type);
-    void ConnectQueuePair(ibv_qp *qp, RdmaPeerQueuePairInfo remote_qp_info);
-
-   private:
-    uint64_t next_wr_id_;
-    int64_t num_signaled_wr_in_progress_;
-    std::unordered_set<uint64_t> completed_wr_;
-
-    struct ibv_context *GetIbContextFromDevice(const char *device_name, const uint8_t port);
 
     const static size_t kMaxBatchSize = 32;
-    struct ibv_send_wr send_wr_template_[kMaxBatchSize];
-    struct ibv_sge sg_template_[kMaxBatchSize];
-    inline void PopulateWriteWorkRequest(struct ibv_sge *sg, struct ibv_send_wr *wr,
-                                         size_t remote_id, uint64_t local_offset,
-                                         uint64_t remote_offset, uint32_t length,
-                                         struct ibv_send_wr *next, unsigned int flags);
+    // These templates are filled with metadata that can be reused across multiple requests.
+    // Use these templates to reduce  request initialization overhead.
+    struct RdmaRequestTemplate {
+        struct ibv_send_wr send_wr_template[kMaxBatchSize];
+        struct ibv_sge sge_template[kMaxBatchSize];
+    };
+
+    // Work request usage status of a RDMA connection
+    // TODO: supports multiple threads per connection. Use case includes multiple threads accessing
+    // the same remote using the same connection.
+    struct RdmaWorkRequestStatus {
+        // Next work request id
+        uint64_t next_wr_id = 0;
+        // Number of in-progress signaled work requests
+        int64_t in_progress_signaled_wrs = 0;
+        // Completed work request ids
+        std::unordered_set<uint64_t> completed_wr_ids;
+    };
+
+    struct RdmaConnection {
+        // Each queue pair corresponds to a remote connection
+        struct ibv_qp *qp = nullptr;
+        // Independent completion queue for each connection
+        struct ibv_cq *cq = nullptr;
+        // Work request status of the connection
+        // NOTE: currently we assume this status will only be modified by one thread
+        RdmaWorkRequestStatus wr_status;
+        // Local information to share with remote peers
+        RdmaPeerInfo local_info;
+        // Remote RDMA informations
+        RdmaPeerInfo remote_info;
+        // Request templates for each connection
+        RdmaRequestTemplate req_template;
+    };
+    std::vector<RdmaConnection> connections_;
+
+    // Initializes the new queue pair and returns the index of `connections_` for new connection
+    size_t PrepareNewConnection();
+    // Gets the remote peer's RDMA connection information
+    void ExchangePeerInfo(size_t peer_idx, bool send_first);
+    // Modifies the queue pair state to ready-to-send
+    void ConnectPeer(size_t peer_idx);
+
+   private:
+    uint32_t max_recv_count_;
+    uint32_t max_send_count_;
+    ibv_qp_type qp_type_;
+
+    struct ibv_context *GetIbContextFromDevice(const char *device_name, const uint8_t port);
+    void PopulateLocalInfo(size_t peer_idx);
+    void PrepareCompletionQueue(size_t peer_idx);
+    void PrepareQueuePair(size_t peer_idx);
+
     inline void FillOutWriteWorkRequest(
-        struct ibv_sge *sg, struct ibv_send_wr *wr, size_t remote_id,
-        const std::vector<std::tuple<uint64_t, uint64_t, uint32_t>> &requests, unsigned int flags);
-    int PostSendWithAutoReclaim(struct ibv_qp *qp, struct ibv_send_wr *wr);
+        size_t remote_id, const std::vector<std::tuple<uint64_t, uint64_t, uint32_t>> &requests,
+        unsigned int flags);
+    // TODO: update all operations to use the request template and remove the work request pointer
+    int PostSendWithAutoReclaim(size_t remote_id, struct ibv_send_wr *wr = nullptr);
 };
 
 // wait for clients to connect, implement connect and disconnect
 class RdmaServer : public RdmaEndpoint {
    public:
-    RdmaServer(char *ib_dev_name, uint8_t ib_dev_port, volatile unsigned char *buffer,
-               size_t buffer_size, uint32_t max_send_count, uint32_t max_recv_count,
-               ibv_qp_type qp_type);
+    RdmaServer(const char *endpoint, char *ib_dev_name, uint8_t ib_dev_port,
+               volatile unsigned char *buffer, size_t buffer_size, uint32_t max_send_count,
+               uint32_t max_recv_count, ibv_qp_type qp_type);
     ~RdmaServer();
-    void Listen(const char *endpoint);
+    void Listen();
 };
 
 // connect to an rdma server
