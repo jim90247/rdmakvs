@@ -149,9 +149,9 @@ void RdmaEndpoint::PopulateLocalInfo(size_t peer_idx) {
     mr_info->set_remote_key(mr_->rkey);
     mr_info->set_size(buf_size_);
 
-    LOG(INFO) << "Local information to share with peers: "
-              << connection.local_info.ShortDebugString() << " (connection index: " << peer_idx
-              << ")";
+    DLOG(INFO) << "Local information to share with peers: "
+               << connection.local_info.ShortDebugString() << " (connection index: " << peer_idx
+               << ")";
 }
 
 void RdmaEndpoint::PrepareCompletionQueue(size_t peer_idx) {
@@ -208,8 +208,8 @@ void RdmaEndpoint::ExchangePeerInfo(size_t peer_idx, bool send_first) {
 
     connection.remote_info.ParseFromString(remote_info_cstr);
 
-    LOG(INFO) << "Remote peer " << peer_idx
-              << " information: " << connection.remote_info.ShortDebugString();
+    DLOG(INFO) << "Remote peer " << peer_idx
+               << " information: " << connection.remote_info.ShortDebugString();
 }
 
 void RdmaEndpoint::ConnectPeer(size_t peer_idx) {

@@ -24,5 +24,5 @@ void RdmaServer::Listen() {
     ExchangePeerInfo(remote_id, false);
     ConnectPeer(remote_id);
 
-    LOG(INFO) << "Queue pair is ready to send";
+    LOG(INFO) << "Queue pair " << remote_id << " is ready to send";
 }
