@@ -2,8 +2,8 @@
  * @file write_messaging.cpp
  * @author jim90247 (jim90247@gmail.com)
  * @brief A small app for testing RDMA WRITE-based messaging
- * @version 0.1
- * @date 2021-07-25
+ * @version 0.2
+ * @date 2021-08-22
  *
  * @copyright Copyright (c) 2021
  *
@@ -33,12 +33,14 @@ const size_t kMessageSize = 16;
 const size_t kLatencyMeasurePeriod = 101;
 
 void ServerMain() {
-    volatile unsigned char *buffer = new volatile unsigned char[kBufferSize]();
+    size_t local_buffer_offset = 1024; // for testing different local and remote offsets
+    volatile unsigned char *buffer =
+        new volatile unsigned char[kBufferSize + local_buffer_offset]();
     RdmaServer *rdma_server = new RdmaServer(FLAGS_endpoint.c_str(), nullptr, 0, buffer,
                                              kBufferSize, 128, 128, IBV_QPT_RC);
     rdma_server->Listen();
-    rdmamsg::RdmaWriteMessagingEndpoint *msg_ep =
-        new rdmamsg::RdmaWriteMessagingEndpoint(rdma_server, buffer, kBufferSize);
+    rdmamsg::RdmaWriteMessagingEndpoint *msg_ep = new rdmamsg::RdmaWriteMessagingEndpoint(
+        rdma_server, buffer, 0, local_buffer_offset, 0, kBufferSize);
 
     for (unsigned long round = 0, flush_round = 0, refresh_round = 0; round < FLAGS_round;
          round++) {
@@ -53,15 +55,15 @@ void ServerMain() {
         }
 
         if (++refresh_round >= FLAGS_inbound_gc_period) {
-            msg_ep->ReleaseInboundMessageBuffer(0);
+            msg_ep->ReleaseInboundMessageBuffer();
             refresh_round = 0;
         }
 
         // Send response
         *reinterpret_cast<volatile unsigned long *>(
-            msg_ep->AllocateOutboundMessageBuffer(0, sizeof(unsigned long))) = round;
+            msg_ep->AllocateOutboundMessageBuffer(sizeof(unsigned long))) = round;
         if (++flush_round >= FLAGS_outbound_batch) {
-            msg_ep->FlushOutboundMessage(0);
+            msg_ep->FlushOutboundMessage();
             flush_round = 0;
         }
     }
@@ -76,8 +78,8 @@ void ClientMain() {
     volatile unsigned char *buffer = new volatile unsigned char[kBufferSize]();
     RdmaClient *rdma_client = new RdmaClient(nullptr, 0, buffer, kBufferSize, 128, 128, IBV_QPT_RC);
     rdma_client->Connect(FLAGS_endpoint.c_str());
-    rdmamsg::RdmaWriteMessagingEndpoint *msg_ep =
-        new rdmamsg::RdmaWriteMessagingEndpoint(rdma_client, buffer, kBufferSize);
+    rdmamsg::RdmaWriteMessagingEndpoint *msg_ep = new rdmamsg::RdmaWriteMessagingEndpoint(
+        rdma_client, buffer, 0, 0, 0, kBufferSize);
 
     unsigned long sent_round = 0, completed_round = 0, flush_round = 0, refresh_round = 0,
                   latency_measure_send_round = 0, latency_measure_recv_round = 0;
@@ -89,10 +91,10 @@ void ClientMain() {
         // Send request
         if (sent_round < FLAGS_round) {
             *reinterpret_cast<volatile unsigned long *>(
-                msg_ep->AllocateOutboundMessageBuffer(0, sizeof(unsigned long))) = sent_round;
+                msg_ep->AllocateOutboundMessageBuffer(sizeof(unsigned long))) = sent_round;
             sent_round++;
             if (++flush_round >= FLAGS_outbound_batch) {
-                msg_ep->FlushOutboundMessage(0);
+                msg_ep->FlushOutboundMessage();
                 flush_round = 0;
             }
             if (++latency_measure_send_round >= kLatencyMeasurePeriod) {
@@ -115,7 +117,7 @@ void ClientMain() {
                 latency_measure_recv_round = 0;
             }
             if (++refresh_round >= FLAGS_inbound_gc_period) {
-                msg_ep->ReleaseInboundMessageBuffer(0);
+                msg_ep->ReleaseInboundMessageBuffer();
                 refresh_round = 0;
             }
         }
