@@ -189,7 +189,7 @@ int64_t RdmaWriteMessagingEndpoint::FlushOutboundMessage() {
     }
 
     outbound_buffer_tail_ = outbound_buffer_head_;
-    remote_buffer_head_ = (outbound_buffer_head_ - outbound_buffer_start_) + inbound_buffer_start_;
+    remote_buffer_head_ = (outbound_buffer_head_ - outbound_buffer_start_) + remote_buffer_start_;
     return track_id;
 }
 
