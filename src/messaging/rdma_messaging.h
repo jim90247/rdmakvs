@@ -19,10 +19,13 @@ struct InboundMessage {
  * @brief A wrapper that uses a subset of RdmaEndpoint buffer to provide messaging between a pair of
  * RdmaConnections.
  */
-class IRdmaMessagingEndpoint {
+class RdmaWriteMessagingEndpoint {
    public:
     const static int64_t kNoOutboundMessage = -1;
 
+    RdmaWriteMessagingEndpoint(RdmaEndpoint* endpoint, volatile unsigned char* rdma_buffer,
+                               int peer_id, size_t local_buffer_offset, size_t remote_buffer_offset,
+                               size_t messaging_buffer_size);
     /**
      * @brief Allocate a region of memory for writing message content
      *
@@ -31,7 +34,14 @@ class IRdmaMessagingEndpoint {
      * @note Do not free the returned buffer! The returned memory region is not necessarily a new
      * memory buffer allocated via malloc() or similar function.
      */
-    virtual volatile void* AllocateOutboundMessageBuffer(int message_size) = 0;
+    virtual volatile void* AllocateOutboundMessageBuffer(int message_size);
+
+    /**
+     * @brief Release inbound message buffer used by previous `CheckInboundMessage` calls
+     *
+     * @note Old data won't be available anymore
+     */
+    virtual void ReleaseInboundMessageBuffer();
 
     /**
      * @brief Send all the allocated messages
@@ -39,42 +49,21 @@ class IRdmaMessagingEndpoint {
      * @return an unique identifier that can be used to track if the flush completes, or negative
      * number for errors
      */
-    virtual int64_t FlushOutboundMessage() = 0;
+    virtual int64_t FlushOutboundMessage();
 
     /**
      * @brief Block until the flush complete
      *
      * @param flush_id the message id to wait for
      */
-    virtual void BlockUntilComplete(int64_t flush_id) = 0;
+    virtual void BlockUntilComplete(int64_t flush_id);
 
     /**
      * @brief Check for inbound message
      *
      * @return the message
      */
-    virtual InboundMessage CheckInboundMessage() = 0;
-
-    /**
-     * @brief Release inbound message buffer used by previous `CheckInboundMessage` calls
-     *
-     * @note Old data won't be available anymore
-     */
-    virtual void ReleaseInboundMessageBuffer() = 0;
-
-    ~IRdmaMessagingEndpoint();
-};
-
-class RdmaWriteMessagingEndpoint : public IRdmaMessagingEndpoint {
-   public:
-    RdmaWriteMessagingEndpoint(IRdmaEndpoint* endpoint, volatile unsigned char* rdma_buffer,
-                               int peer_id, size_t local_buffer_offset, size_t remote_buffer_offset,
-                               size_t messaging_buffer_size);
-    virtual volatile void* AllocateOutboundMessageBuffer(int message_size) override;
-    virtual void ReleaseInboundMessageBuffer() override;
-    virtual int64_t FlushOutboundMessage() override;
-    virtual void BlockUntilComplete(int64_t flush_id) override;
-    virtual InboundMessage CheckInboundMessage() override;
+    virtual InboundMessage CheckInboundMessage();
 
     struct OutboundMessage {
         uint64_t id;
@@ -83,7 +72,7 @@ class RdmaWriteMessagingEndpoint : public IRdmaMessagingEndpoint {
     };
 
    private:
-    IRdmaEndpoint* endpoint_;
+    RdmaEndpoint* endpoint_;
     const int peer_id_;
     std::queue<OutboundMessage> outbound_pending_message_;
     volatile unsigned char* rdma_buffer_;

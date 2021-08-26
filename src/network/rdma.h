@@ -24,32 +24,8 @@ enum class SignalStrategy {
 
 const uint8_t kAnyIbPort = 0;
 
-/**
- * @brief Defines interface for an RDMA endpoint.
- */
-class IRdmaEndpoint {
-   public:
-    virtual uint64_t Write(bool initialized, size_t remote_id, uint64_t local_offset,
-                           uint64_t remote_offset, uint32_t length, unsigned int flags) = 0;
-    virtual void InitializeFastWrite(size_t remote_id, size_t batch_size) = 0;
-    virtual std::vector<uint64_t> WriteBatch(
-        bool initialized, size_t remote_id,
-        const std::vector<std::tuple<uint64_t, uint64_t, uint32_t>> &requests,
-        SignalStrategy signal_strategy, unsigned int flags) = 0;
-    virtual uint64_t Read(size_t remote_id, uint64_t local_offset, uint64_t remote_offset,
-                          uint32_t length, unsigned int flags) = 0;
-    virtual uint64_t Send(size_t remote_id, uint64_t offset, uint32_t length,
-                          unsigned int flags) = 0;
-    virtual uint64_t Recv(size_t remote_id, uint64_t offset, uint32_t length) = 0;
-    virtual void CompareAndSwap(void *addr) = 0;
-    virtual void WaitForCompletion(size_t remote_id, bool poll_until_found,
-                                   uint64_t target_wr_id) = 0;
-    virtual void ClearCompletedRecords(size_t remote_id) = 0;
-    virtual ~IRdmaEndpoint();
-};
-
 // base class for any rdma service. establish ibv context, queue pair, etc.
-class RdmaEndpoint : public IRdmaEndpoint {
+class RdmaEndpoint {
    public:
     /**
      * @brief Construct a new Rdma Endpoint object
@@ -67,25 +43,31 @@ class RdmaEndpoint : public IRdmaEndpoint {
     RdmaEndpoint(char *ib_dev_name, uint8_t ib_dev_port, volatile unsigned char *buffer,
                  size_t buffer_size, uint32_t max_send_count, uint32_t max_recv_count,
                  ibv_qp_type qp_type = IBV_QPT_RC);
-    ~RdmaEndpoint();
-    uint64_t Write(bool initialized, size_t remote_id, uint64_t local_offset,
-                   uint64_t remote_offset, uint32_t length,
-                   unsigned int flags = IBV_SEND_SIGNALED) override;
-    void InitializeFastWrite(size_t remote_id, size_t batch_size) override;
-    std::vector<uint64_t> WriteBatch(
+    virtual ~RdmaEndpoint();
+    virtual uint64_t Write(bool initialized, size_t remote_id, uint64_t local_offset,
+                           uint64_t remote_offset, uint32_t length,
+                           unsigned int flags = IBV_SEND_SIGNALED);
+    virtual void InitializeFastWrite(size_t remote_id, size_t batch_size);
+    virtual std::vector<uint64_t> WriteBatch(
         bool initialized, size_t remote_id,
         const std::vector<std::tuple<uint64_t, uint64_t, uint32_t>> &requests,
-        SignalStrategy signal_strategy, unsigned int flags = 0) override;
-    uint64_t Read(size_t remote_id, uint64_t local_offset, uint64_t remote_offset, uint32_t length,
-                  unsigned int flags = IBV_SEND_SIGNALED) override;
-    uint64_t Send(size_t remote_id, uint64_t offset, uint32_t length,
-                  unsigned int flags = IBV_SEND_SIGNALED) override;
-    uint64_t Recv(size_t remote_id, uint64_t offset, uint32_t length) override;
-    void CompareAndSwap(void *addr) override;
-    void WaitForCompletion(size_t remote_id, bool poll_until_found, uint64_t target_wr_id) override;
-    void ClearCompletedRecords(size_t remote_id) override;
+        SignalStrategy signal_strategy, unsigned int flags = 0);
+    virtual uint64_t Read(size_t remote_id, uint64_t local_offset, uint64_t remote_offset,
+                          uint32_t length, unsigned int flags = IBV_SEND_SIGNALED);
+    virtual uint64_t Send(size_t remote_id, uint64_t offset, uint32_t length,
+                          unsigned int flags = IBV_SEND_SIGNALED);
+    virtual uint64_t Recv(size_t remote_id, uint64_t offset, uint32_t length);
+    virtual void CompareAndSwap(void *addr);
+    virtual void WaitForCompletion(size_t remote_id, bool poll_until_found, uint64_t target_wr_id);
+    virtual void ClearCompletedRecords(size_t remote_id);
 
    protected:
+    /**
+     * @brief Construct a new Rdma Endpoint object
+     *
+     * @note dummy constructor just for testing
+     */
+    RdmaEndpoint();
     uint8_t ib_dev_port_;
     struct ibv_port_attr ib_dev_port_info_;
     struct ibv_context *ctx_;

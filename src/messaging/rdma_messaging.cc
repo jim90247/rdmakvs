@@ -12,9 +12,7 @@
 
 namespace rdmamsg {
 
-IRdmaMessagingEndpoint::~IRdmaMessagingEndpoint() {}
-
-RdmaWriteMessagingEndpoint::RdmaWriteMessagingEndpoint(IRdmaEndpoint* endpoint,
+RdmaWriteMessagingEndpoint::RdmaWriteMessagingEndpoint(RdmaEndpoint* endpoint,
                                                        volatile unsigned char* rdma_buffer,
                                                        int peer_id, size_t local_buffer_offset,
                                                        size_t remote_buffer_offset,

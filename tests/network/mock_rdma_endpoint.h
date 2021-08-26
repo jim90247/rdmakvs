@@ -1,7 +1,7 @@
 #include "gmock/gmock.h"
 #include "network/rdma.h"
 
-class MockRdmaEndpoint : public IRdmaEndpoint {
+class MockRdmaEndpoint : public RdmaEndpoint {
    public:
     MOCK_METHOD(uint64_t, Write,
                 (bool initialized, size_t remote_id, uint64_t local_offset, uint64_t remote_offset,
@@ -22,7 +22,7 @@ class MockRdmaEndpoint : public IRdmaEndpoint {
                 (override));
     MOCK_METHOD(uint64_t, Recv, (size_t remote_id, uint64_t offset, uint32_t length), (override));
     MOCK_METHOD(void, CompareAndSwap, (void *addr), (override));
-    MOCK_METHOD(void, WaitForCompletion, (bool poll_until_found, uint64_t target_wr_id),
-                (override));
-    MOCK_METHOD(void, ClearCompletedRecords, (), (override));
+    MOCK_METHOD(void, WaitForCompletion,
+                (size_t remote_id, bool poll_until_found, uint64_t target_wr_id), (override));
+    MOCK_METHOD(void, ClearCompletedRecords, (size_t remote_id), (override));
 };

@@ -13,8 +13,6 @@
 
 #include "network/rdma.h"
 
-IRdmaEndpoint::~IRdmaEndpoint() {}
-
 RdmaEndpoint::RdmaEndpoint(char *ib_dev_name, uint8_t ib_dev_port, volatile unsigned char *buffer,
                            size_t buffer_size, uint32_t max_send_count, uint32_t max_recv_count,
                            ibv_qp_type qp_type)
@@ -44,6 +42,8 @@ RdmaEndpoint::RdmaEndpoint(char *ib_dev_name, uint8_t ib_dev_port, volatile unsi
                      IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_WRITE);
     CHECK(mr_ != nullptr) << "Failed to register memory region";
 }
+
+RdmaEndpoint::RdmaEndpoint() {}
 
 RdmaEndpoint::~RdmaEndpoint() {
     for (RdmaConnection &connection : connections_) {
@@ -519,9 +519,10 @@ void RdmaEndpoint::WaitForCompletion(size_t remote_id, bool poll_until_found,
             wr_status.completed_wr_ids.insert(wc_list[i].wr_id);
             wr_status.in_progress_signaled_wrs--;
         }
-    } while (wr_status.in_progress_signaled_wrs > 0 &&
-             (n == 0 || (poll_until_found && wr_status.completed_wr_ids.find(target_wr_id) ==
-                                                 wr_status.completed_wr_ids.end())));
+    } while (wr_status.in_progress_signaled_wrs >
+                 0 /* TODO: how should this condition be updated in multi-thread model? */
+             && (n == 0 || (poll_until_found && wr_status.completed_wr_ids.find(target_wr_id) ==
+                                                    wr_status.completed_wr_ids.end())));
 }
 
 void RdmaEndpoint::ClearCompletedRecords(size_t remote_id) {
