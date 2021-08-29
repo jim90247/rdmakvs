@@ -14,3 +14,4 @@ target_link_libraries(write_msg network messaging glog gflags)
 install(TARGETS write_msg DESTINATION ${RDMAKVS_INSTALL_BIN_DIR}/app)
 
 add_subdirectory(secondary_prototype)
+add_subdirectory(messaging_check)
