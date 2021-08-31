@@ -16,6 +16,7 @@ struct KeyValuePair {
     char value[kMaxValueSize];
     int signal;
 
+    static KeyValuePair Create(KeyType key, ValueSizeType size, const char* value);
     static KeyValuePair ParseFrom(volatile unsigned char* buf);
     void SerializeTo(volatile unsigned char* const buf) const;
 };

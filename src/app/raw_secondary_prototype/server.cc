@@ -10,11 +10,7 @@
 DEFINE_uint64(buffer_size, 1 << 20, "Buffer size");
 
 void ServerMain(RdmaServer &server, volatile unsigned char *const buf) {
-    KeyValuePair kvp;
-    kvp.key = 123;
-    kvp.size = 4;
-    std::strncpy(kvp.value, "123", kMaxValueSize);
-    kvp.signal = 1;
+    KeyValuePair kvp = KeyValuePair::Create(123, 4, "123");
     kvp.SerializeTo(buf);
     auto wr = server.Write(false, 0, 0, 0, sizeof(KeyValuePair));
     server.WaitForCompletion(0, true, wr);
