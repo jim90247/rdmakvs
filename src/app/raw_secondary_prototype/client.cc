@@ -7,7 +7,15 @@
 
 DEFINE_uint64(buffer_size, 1 << 20, "Buffer size");
 
-void ClientMain(RdmaClient &client, volatile unsigned char *const buf) {}
+void ClientMain(RdmaClient &client, volatile unsigned char *const buf) {
+    KeyValuePair kvp;
+    do {
+        kvp = KeyValuePair::ParseFrom(buf);
+    } while (kvp.signal != 1);
+    CHECK_EQ(kvp.key, 123);
+    CHECK_EQ(kvp.size, 4);
+    CHECK_STREQ(kvp.value, "123");
+}
 
 int main(int argc, char **argv) {
     gflags::ParseCommandLineFlags(&argc, &argv, true);

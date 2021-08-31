@@ -2,12 +2,23 @@
 #include <glog/logging.h>
 #include <infiniband/verbs.h>
 
+#include <cstring>
+
 #include "app/raw_secondary_prototype/common.h"
 #include "network/rdma.h"
 
 DEFINE_uint64(buffer_size, 1 << 20, "Buffer size");
 
-void ServerMain(RdmaServer &server, volatile unsigned char *const buf) {}
+void ServerMain(RdmaServer &server, volatile unsigned char *const buf) {
+    KeyValuePair kvp;
+    kvp.key = 123;
+    kvp.size = 4;
+    std::strncpy(kvp.value, "123", kMaxValueSize);
+    kvp.signal = 1;
+    kvp.SerializeTo(buf);
+    auto wr = server.Write(false, 0, 0, 0, sizeof(KeyValuePair));
+    server.WaitForCompletion(0, true, wr);
+}
 
 int main(int argc, char **argv) {
     gflags::ParseCommandLineFlags(&argc, &argv, true);
