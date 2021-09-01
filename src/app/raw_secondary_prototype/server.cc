@@ -34,14 +34,14 @@ void ServerMain(RdmaServer &server, volatile unsigned char *const buf) {
         CHECK_EQ(processed, kvp.key);
         CHECK_STREQ(expected_value.c_str(), kvp.value);
 
+        // clear this slot's incoming buffer for reuse in future
+        std::fill(inbuf + slot_offset, inbuf + slot_offset + FLAGS_msg_slot_size, 0);
+
         // send response
         SerializeKvpAsMsg(outbuf + slot_offset, kvp);
         auto wr = server.Write(false, 0, out_offset + slot_offset, in_offset + slot_offset,
                                FLAGS_msg_slot_size);
         server.WaitForCompletion(0, true, wr);
-
-        // clear this slot's incoming buffer for reuse in future
-        std::fill(inbuf + slot_offset, inbuf + slot_offset + FLAGS_msg_slot_size, 0);
 
         processed++;
         slot = (slot + 1) % FLAGS_msg_slots;

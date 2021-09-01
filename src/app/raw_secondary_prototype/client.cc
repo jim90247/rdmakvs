@@ -41,7 +41,9 @@ void ClientMain(RdmaClient &client, volatile unsigned char *const buf) {
             // write
             auto wr = client.Write(false, 0, out_offset + slot_offset, in_offset + slot_offset,
                                    FLAGS_msg_slot_size);
-            client.WaitForCompletion(0, true, wr);
+            // The response from server can be used as an indicator for the request completion.
+            // Therefore this waiting is optional.
+            // client.WaitForCompletion(0, true, wr);
 
             // mark as used
             free_slots.pop();
