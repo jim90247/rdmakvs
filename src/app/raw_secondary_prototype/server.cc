@@ -1,8 +1,12 @@
 #include <gflags/gflags.h>
 #include <glog/logging.h>
+#include <glog/raw_logging.h>
 #include <infiniband/verbs.h>
 
 #include <cstring>
+#include <functional>
+#include <thread>
+#include <vector>
 
 #include "app/raw_secondary_prototype/common.h"
 #include "network/rdma.h"
@@ -13,10 +17,14 @@ inline std::string GetValueStr(int i) {
     return ss.str();
 }
 
-void ServerMain(RdmaServer &server, volatile unsigned char *const buf) {
-    const size_t out_offset = 0, in_offset = FLAGS_msg_slot_size * FLAGS_msg_slots;
-    volatile unsigned char *const outbuf = buf;
+void ServerMain(RdmaServer &server, volatile unsigned char *const buf, const IdType id) {
+    const size_t out_offset = ComputeMsgBufOffset(id, false),
+                 in_offset = ComputeMsgBufOffset(id, true);
+    volatile unsigned char *const outbuf = buf + out_offset;
     volatile unsigned char *const inbuf = buf + in_offset;
+
+    const IdType r_id = ExchangeId(server, buf, id, out_offset, in_offset, false);
+    const size_t r_in_offset = ComputeMsgBufOffset(r_id, true);
 
     int slot = 0;
     int processed = 0;
@@ -39,14 +47,16 @@ void ServerMain(RdmaServer &server, volatile unsigned char *const buf) {
 
         // send response
         SerializeKvpAsMsg(outbuf + slot_offset, kvp);
-        auto wr = server.Write(false, 0, out_offset + slot_offset, in_offset + slot_offset,
+        auto wr = server.Write(false, id, out_offset + slot_offset, r_in_offset + slot_offset,
                                FLAGS_msg_slot_size);
-        server.WaitForCompletion(0, true, wr);
+        server.WaitForCompletion(id, true, wr);
 
         processed++;
         slot = (slot + 1) % FLAGS_msg_slots;
 
-        LOG_EVERY_N(INFO, FLAGS_rounds / 10) << "Processed count: " << processed;
+        if (processed % (FLAGS_rounds / 10) == 0) {
+            RAW_LOG(INFO, "Id: %d, (r_id: %d) Processed: %d", id, r_id, processed);
+        }
     }
 }
 
@@ -54,15 +64,24 @@ int main(int argc, char **argv) {
     gflags::ParseCommandLineFlags(&argc, &argv, true);
     google::InitGoogleLogging(argv[0]);
 
-    size_t buf_size = FLAGS_msg_slot_size * FLAGS_msg_slots * 2;
+    size_t buf_size = FLAGS_threads * FLAGS_msg_slot_size * FLAGS_msg_slots * 2;
 
     volatile unsigned char *buffer = new volatile unsigned char[buf_size]();
     RdmaServer server(FLAGS_endpoint.c_str(), nullptr, 0, buffer, buf_size, 128, 128, IBV_QPT_RC);
 
-    server.Listen();
-    LOG(INFO) << "Server connected to remote.";
+    for (int i = 0; i < FLAGS_threads; i++) {
+        server.Listen();
+        DLOG(INFO) << "Client " << i << " connected";
+    }
+    std::vector<std::thread> threads;
+    for (int i = 0; i < FLAGS_threads; i++) {
+        std::thread t(ServerMain, std::ref(server), buffer, i);
+        threads.emplace_back(std::move(t));
+    }
 
-    ServerMain(std::ref(server), buffer);
+    for (std::thread &t : threads) {
+        t.join();
+    }
 
     return 0;
 }

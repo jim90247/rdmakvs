@@ -9,6 +9,7 @@ DECLARE_string(endpoint);
 DECLARE_uint64(msg_slot_size);
 DECLARE_uint64(msg_slots);
 DECLARE_int32(rounds);
+DECLARE_int32(threads);
 
 using std::int64_t;
 using std::size_t;
@@ -16,6 +17,7 @@ using std::uint64_t;
 using KeyType = long;
 using ValueSizeType = int;
 using MsgSizeType = int;
+using IdType = int;
 
 constexpr ValueSizeType kMaxValueSize = 64;
 
@@ -39,3 +41,8 @@ inline size_t ComputeSlotOffset(int sid) { return sid * FLAGS_msg_slot_size; }
 inline bool CheckMsgPresent(volatile unsigned char* const buf) {
     return buf[FLAGS_msg_slot_size - 1] != 0;
 }
+
+IdType ExchangeId(RdmaEndpoint& ep, volatile unsigned char* const buf, IdType id,
+                  size_t send_offset, size_t recv_offset, bool send_first);
+
+size_t ComputeMsgBufOffset(IdType id, bool in);

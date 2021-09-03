@@ -8,6 +8,7 @@ DEFINE_string(endpoint, "tcp://192.168.223.1:7889", "Zmq endpoint");
 DEFINE_uint64(msg_slot_size, 128, "Size of each message slot");
 DEFINE_uint64(msg_slots, 4096, "Message slots for in/out message each");
 DEFINE_int32(rounds, 100, "Rounds");
+DEFINE_int32(threads, 1, "Threads");
 
 KeyValuePair KeyValuePair::ParseFrom(volatile unsigned char* buf) {
     KeyValuePair kvp;
@@ -36,4 +37,31 @@ void SerializeKvpAsMsg(volatile unsigned char* const buf, const KeyValuePair& kv
     kvp.SerializeTo(buf + sizeof(MsgSizeType));
     // trailing byte
     buf[FLAGS_msg_slot_size - 1] = 0xff;
+}
+
+IdType ExchangeId(RdmaEndpoint& ep, volatile unsigned char* const buf, IdType id,
+                  size_t send_offset, size_t recv_offset, bool send_first) {
+    *reinterpret_cast<volatile IdType*>(buf + send_offset) = id;
+    uint64_t s_wr, r_wr;
+    if (send_first) {
+        s_wr = ep.Send(id, send_offset, sizeof(IdType));
+        r_wr = ep.Recv(id, recv_offset, sizeof(IdType));
+    } else {
+        r_wr = ep.Recv(id, recv_offset, sizeof(IdType));
+        s_wr = ep.Send(id, send_offset, sizeof(IdType));
+    }
+    ep.WaitForCompletion(id, true, s_wr);
+    ep.WaitForCompletion(id, true, r_wr);
+    IdType remote_id = *reinterpret_cast<volatile IdType*>(buf + recv_offset);
+
+    // clear used buffer
+    *reinterpret_cast<volatile IdType*>(buf + send_offset) = 0;
+    *reinterpret_cast<volatile IdType*>(buf + recv_offset) = 0;
+
+    return remote_id;
+}
+
+size_t ComputeMsgBufOffset(IdType id, bool in) {
+    int x = in ? 1 : 0;
+    return (2 * id + x) * FLAGS_msg_slots * FLAGS_msg_slot_size;
 }
