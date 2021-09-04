@@ -19,13 +19,13 @@ inline std::string GetValueStr(int i) {
 }
 
 void ClientMain(RdmaClient &client, volatile unsigned char *const buf, IdType id) {
-    const size_t out_offset = ComputeMsgBufOffset(id, false),
-                 in_offset = ComputeMsgBufOffset(id, true);
+    const size_t out_offset = ComputeMsgBufOffset(id, id, false),
+                 in_offset = ComputeMsgBufOffset(id, id, true);
     volatile unsigned char *const outbuf = buf + out_offset;
     volatile unsigned char *const inbuf = buf + in_offset;
 
-    const IdType r_id = ExchangeId(client, buf, id, out_offset, in_offset, false);
-    const size_t r_in_offset = ComputeMsgBufOffset(r_id, true);
+    // const IdType r_id = ExchangeId(client, buf, id, out_offset, in_offset, false);
+    const size_t r_in_offset = ComputeMsgBufOffset(id, id, true);
 
     std::queue<int> free_slots, used_slots;
     for (int i = 0; i < FLAGS_msg_slots; i++) {
@@ -58,7 +58,7 @@ void ClientMain(RdmaClient &client, volatile unsigned char *const buf, IdType id
             ++sent;
 
             if (sent % (FLAGS_rounds / 10) == 0) {
-                RAW_LOG(INFO, "Id: %d, (r_id: %d) Sent: %d", id, r_id, sent);
+                RAW_LOG(INFO, "Id: %d, (r_id: %d) Sent: %d", id, id, sent);
             }
         }
 
@@ -82,7 +82,7 @@ void ClientMain(RdmaClient &client, volatile unsigned char *const buf, IdType id
             ++acked;
 
             if (acked % (FLAGS_rounds / 10) == 0) {
-                RAW_LOG(INFO, "Id: %d, (r_id: %d) Acknowledged: %d", id, r_id, acked);
+                RAW_LOG(INFO, "Id: %d, (r_id: %d) Acknowledged: %d", id, id, acked);
             }
         }
     }
@@ -92,17 +92,18 @@ int main(int argc, char **argv) {
     gflags::ParseCommandLineFlags(&argc, &argv, true);
     google::InitGoogleLogging(argv[0]);
 
-    size_t buf_size = FLAGS_threads * FLAGS_msg_slot_size * FLAGS_msg_slots * 2;
+    size_t buf_size =
+        FLAGS_server_threads * FLAGS_client_threads * FLAGS_msg_slot_size * FLAGS_msg_slots * 2;
 
     volatile unsigned char *buffer = new volatile unsigned char[buf_size]();
     RdmaClient client(nullptr, 0, buffer, buf_size, 128, 128, IBV_QPT_RC);
 
-    for (int i = 0; i < FLAGS_threads; i++) {
+    for (int i = 0; i < FLAGS_client_threads; i++) {
         client.Connect(FLAGS_endpoint.c_str());
         DLOG(INFO) << "Thread " << i << " connected to server.";
     }
     std::vector<std::thread> threads;
-    for (int i = 0; i < FLAGS_threads; i++) {
+    for (int i = 0; i < FLAGS_client_threads; i++) {
         std::thread t(ClientMain, std::ref(client), buffer, i);
         threads.emplace_back(std::move(t));
     }

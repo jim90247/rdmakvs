@@ -8,7 +8,8 @@ DEFINE_string(endpoint, "tcp://192.168.223.1:7889", "Zmq endpoint");
 DEFINE_uint64(msg_slot_size, 128, "Size of each message slot");
 DEFINE_uint64(msg_slots, 4096, "Message slots for in/out message each");
 DEFINE_int32(rounds, 100, "Rounds");
-DEFINE_int32(threads, 1, "Threads");
+DEFINE_int32(server_threads, 1, "Server threads");
+DEFINE_int32(client_threads, 1, "Client threads");
 
 KeyValuePair KeyValuePair::ParseFrom(volatile unsigned char* buf) {
     KeyValuePair kvp;
@@ -61,7 +62,7 @@ IdType ExchangeId(RdmaEndpoint& ep, volatile unsigned char* const buf, IdType id
     return remote_id;
 }
 
-size_t ComputeMsgBufOffset(IdType id, bool in) {
+size_t ComputeMsgBufOffset(IdType s_id, IdType c_id, bool in) {
     int x = in ? 1 : 0;
-    return (2 * id + x) * FLAGS_msg_slots * FLAGS_msg_slot_size;
+    return ((FLAGS_server_threads * s_id + c_id) * 2 + x) * FLAGS_msg_slots * FLAGS_msg_slot_size;
 }

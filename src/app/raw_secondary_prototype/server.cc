@@ -18,13 +18,13 @@ inline std::string GetValueStr(int i) {
 }
 
 void ServerMain(RdmaServer &server, volatile unsigned char *const buf, const IdType id) {
-    const size_t out_offset = ComputeMsgBufOffset(id, false),
-                 in_offset = ComputeMsgBufOffset(id, true);
+    const size_t out_offset = ComputeMsgBufOffset(id, id, false),
+                 in_offset = ComputeMsgBufOffset(id, id, true);
     volatile unsigned char *const outbuf = buf + out_offset;
     volatile unsigned char *const inbuf = buf + in_offset;
 
-    const IdType r_id = ExchangeId(server, buf, id, out_offset, in_offset, false);
-    const size_t r_in_offset = ComputeMsgBufOffset(r_id, true);
+    // const IdType r_id = ExchangeId(server, buf, id, out_offset, in_offset, false);
+    const size_t r_in_offset = ComputeMsgBufOffset(id, id, true);
 
     int slot = 0;
     int processed = 0;
@@ -55,7 +55,7 @@ void ServerMain(RdmaServer &server, volatile unsigned char *const buf, const IdT
         slot = (slot + 1) % FLAGS_msg_slots;
 
         if (processed % (FLAGS_rounds / 10) == 0) {
-            RAW_LOG(INFO, "Id: %d, (r_id: %d) Processed: %d", id, r_id, processed);
+            RAW_LOG(INFO, "Id: %d, (r_id: %d) Processed: %d", id, id, processed);
         }
     }
 }
@@ -64,17 +64,18 @@ int main(int argc, char **argv) {
     gflags::ParseCommandLineFlags(&argc, &argv, true);
     google::InitGoogleLogging(argv[0]);
 
-    size_t buf_size = FLAGS_threads * FLAGS_msg_slot_size * FLAGS_msg_slots * 2;
+    size_t buf_size =
+        FLAGS_server_threads * FLAGS_client_threads * FLAGS_msg_slot_size * FLAGS_msg_slots * 2;
 
     volatile unsigned char *buffer = new volatile unsigned char[buf_size]();
     RdmaServer server(FLAGS_endpoint.c_str(), nullptr, 0, buffer, buf_size, 128, 128, IBV_QPT_RC);
 
-    for (int i = 0; i < FLAGS_threads; i++) {
+    for (int i = 0; i < FLAGS_server_threads; i++) {
         server.Listen();
         DLOG(INFO) << "Client " << i << " connected";
     }
     std::vector<std::thread> threads;
-    for (int i = 0; i < FLAGS_threads; i++) {
+    for (int i = 0; i < FLAGS_server_threads; i++) {
         std::thread t(ServerMain, std::ref(server), buffer, i);
         threads.emplace_back(std::move(t));
     }

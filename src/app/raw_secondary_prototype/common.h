@@ -9,7 +9,8 @@ DECLARE_string(endpoint);
 DECLARE_uint64(msg_slot_size);
 DECLARE_uint64(msg_slots);
 DECLARE_int32(rounds);
-DECLARE_int32(threads);
+DECLARE_int32(server_threads);
+DECLARE_int32(client_threads);
 
 using std::int64_t;
 using std::size_t;
@@ -45,4 +46,4 @@ inline bool CheckMsgPresent(volatile unsigned char* const buf) {
 IdType ExchangeId(RdmaEndpoint& ep, volatile unsigned char* const buf, IdType id,
                   size_t send_offset, size_t recv_offset, bool send_first);
 
-size_t ComputeMsgBufOffset(IdType id, bool in);
+size_t ComputeMsgBufOffset(IdType s_id, IdType c_id, bool in);
