@@ -2,6 +2,8 @@
 #include <gflags/gflags_declare.h>
 
 #include <cstdint>
+#include <sstream>
+#include <string>
 
 #include "network/rdma.h"
 
@@ -44,3 +46,9 @@ inline bool CheckMsgPresent(volatile unsigned char* const buf) {
 }
 
 size_t ComputeMsgBufOffset(IdType s_id, IdType c_id, bool in);
+
+inline std::string GetValueStr(int s, int c, int r) {
+    std::stringstream ss;
+    ss << "server=" << s << ", client=" << c << ", round=" << r;
+    return ss.str();
+}
