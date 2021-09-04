@@ -12,7 +12,7 @@
 #include "app/raw_secondary_prototype/common.h"
 #include "network/rdma.h"
 
-void ClientMain(RdmaClient &client, volatile unsigned char *const buf, IdType id) {
+void ClientMain(RdmaEndpoint &ep, volatile unsigned char *const buf, IdType id) {
     // These fields should not be modified
     size_t *out_offset = new size_t[FLAGS_server_threads],
            *r_in_offset = new size_t[FLAGS_server_threads];
@@ -50,7 +50,7 @@ void ClientMain(RdmaClient &client, volatile unsigned char *const buf, IdType id
                 std::fill(inbuf[s] + slot_offset, inbuf[s] + slot_offset + FLAGS_msg_slot_size, 0);
 
                 // write
-                auto wr = client.Write(false, id, out_offset[s] + slot_offset,
+                auto wr = ep.Write(false, id, out_offset[s] + slot_offset,
                                        r_in_offset[s] + slot_offset, FLAGS_msg_slot_size);
                 // The response from server can be used as an indicator for the request completion.
                 // Therefore this waiting is optional.
@@ -104,15 +104,15 @@ int main(int argc, char **argv) {
         FLAGS_server_threads * FLAGS_client_threads * FLAGS_msg_slot_size * FLAGS_msg_slots * 2;
 
     volatile unsigned char *buffer = new volatile unsigned char[buf_size]();
-    RdmaClient client(nullptr, 0, buffer, buf_size, 128, 128, IBV_QPT_RC);
+    RdmaEndpoint ep(nullptr, 0, buffer, buf_size, 128, 128, IBV_QPT_RC);
 
     for (int i = 0; i < FLAGS_client_threads; i++) {
-        client.Connect(FLAGS_endpoint.c_str());
+        ep.Connect(FLAGS_endpoint.c_str());
         DLOG(INFO) << "Thread " << i << " connected to server.";
     }
     std::vector<std::thread> threads;
     for (int i = 0; i < FLAGS_client_threads; i++) {
-        std::thread t(ClientMain, std::ref(client), buffer, i);
+        std::thread t(ClientMain, std::ref(ep), buffer, i);
         threads.emplace_back(std::move(t));
     }
 

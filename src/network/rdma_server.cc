@@ -16,7 +16,6 @@ RdmaServer::RdmaServer(const char *endpoint, char *ib_dev_name, uint8_t ib_dev_p
 
 RdmaServer::~RdmaServer() {
     zmq_close(zmq_socket_);
-    zmq_ctx_destroy(zmq_context_);
 }
 
 void RdmaServer::Listen() {

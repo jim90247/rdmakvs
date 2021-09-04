@@ -11,7 +11,7 @@
 #include "app/raw_secondary_prototype/common.h"
 #include "network/rdma.h"
 
-void ServerMain(RdmaServer &server, volatile unsigned char *const buf, const IdType id) {
+void ServerMain(RdmaEndpoint &ep, volatile unsigned char *const buf, const IdType id) {
     // These fields should not be modified
     size_t *out_offset = new size_t[FLAGS_client_threads],
            *r_in_offset = new size_t[FLAGS_client_threads];
@@ -52,9 +52,9 @@ void ServerMain(RdmaServer &server, volatile unsigned char *const buf, const IdT
 
             // send response
             SerializeKvpAsMsg(outbuf[c] + slot_offset, kvp);
-            auto wr = server.Write(false, id, out_offset[c] + slot_offset,
+            auto wr = ep.Write(false, id, out_offset[c] + slot_offset,
                                    r_in_offset[c] + slot_offset, FLAGS_msg_slot_size);
-            server.WaitForCompletion(id, true, wr);
+            ep.WaitForCompletion(id, true, wr);
 
             ++processed[c];
             ++tot_processed;
@@ -75,15 +75,16 @@ int main(int argc, char **argv) {
         FLAGS_server_threads * FLAGS_client_threads * FLAGS_msg_slot_size * FLAGS_msg_slots * 2;
 
     volatile unsigned char *buffer = new volatile unsigned char[buf_size]();
-    RdmaServer server(FLAGS_endpoint.c_str(), nullptr, 0, buffer, buf_size, 128, 128, IBV_QPT_RC);
+    RdmaEndpoint ep(nullptr, 0, buffer, buf_size, 128, 128, IBV_QPT_RC);
+    ep.BindToZmqEndpoint(FLAGS_endpoint.c_str());
 
     for (int i = 0; i < FLAGS_server_threads; i++) {
-        server.Listen();
+        ep.Listen();
         DLOG(INFO) << "Client " << i << " connected";
     }
     std::vector<std::thread> threads;
     for (int i = 0; i < FLAGS_server_threads; i++) {
-        std::thread t(ServerMain, std::ref(server), buffer, i);
+        std::thread t(ServerMain, std::ref(ep), buffer, i);
         threads.emplace_back(std::move(t));
     }
 

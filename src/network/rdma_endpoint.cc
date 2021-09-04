@@ -28,6 +28,10 @@ RdmaEndpoint::RdmaEndpoint(char *ib_dev_name, uint8_t ib_dev_port, volatile unsi
     zmq_context_ = zmq_ctx_new();
     CHECK(zmq_context_ != nullptr)
         << "Failed to create zeromq context: " << zmq_strerror(zmq_errno());
+    zmq_server_socket_ = zmq_socket(zmq_context_, ZMQ_REP);
+    CHECK_NOTNULL(zmq_server_socket_);
+    zmq_client_socket_ = zmq_socket(zmq_context_, ZMQ_REQ);
+    CHECK_NOTNULL(zmq_client_socket_);
 
     ctx_ = GetIbContextFromDevice(ib_dev_name, ib_dev_port_);
     CHECK(ctx_ != nullptr) << "Failed to get InfiniBand context";
@@ -66,6 +70,10 @@ RdmaEndpoint::~RdmaEndpoint() {
     if (buf_ != nullptr) {
         delete[] buf_;
     }
+
+    zmq_close(zmq_server_socket_);
+    zmq_close(zmq_client_socket_);
+    zmq_ctx_destroy(zmq_context_);
 }
 
 struct ibv_context *RdmaEndpoint::GetIbContextFromDevice(const char *target_device_name,
@@ -193,23 +201,27 @@ void RdmaEndpoint::PrepareQueuePair(size_t peer_idx) {
         << "Failed to modify queue pair to INIT";
 }
 
-void RdmaEndpoint::ExchangePeerInfo(size_t peer_idx, bool send_first) {
+void RdmaEndpoint::ExchangePeerInfo(void *zmq_socket, size_t peer_idx, bool send_first) {
     char remote_info_cstr[kZmqMessageBufferSize];
     RdmaConnection &connection = connections_.at(peer_idx);
     std::string local_info_str = connection.local_info.SerializeAsString();
 
     if (send_first) {
-        zmq_send(zmq_socket_, local_info_str.data(), local_info_str.size(), 0);
-        zmq_recv(zmq_socket_, remote_info_cstr, sizeof(remote_info_cstr), 0);
+        zmq_send(zmq_socket, local_info_str.data(), local_info_str.size(), 0);
+        zmq_recv(zmq_socket, remote_info_cstr, sizeof(remote_info_cstr), 0);
     } else {
-        zmq_recv(zmq_socket_, remote_info_cstr, sizeof(remote_info_cstr), 0);
-        zmq_send(zmq_socket_, local_info_str.data(), local_info_str.size(), 0);
+        zmq_recv(zmq_socket, remote_info_cstr, sizeof(remote_info_cstr), 0);
+        zmq_send(zmq_socket, local_info_str.data(), local_info_str.size(), 0);
     }
 
     connection.remote_info.ParseFromString(remote_info_cstr);
 
     DLOG(INFO) << "Remote peer " << peer_idx
                << " information: " << connection.remote_info.ShortDebugString();
+}
+
+void RdmaEndpoint::ExchangePeerInfo(size_t peer_idx, bool send_first) {
+    ExchangePeerInfo(zmq_socket_, peer_idx, send_first);
 }
 
 void RdmaEndpoint::ConnectPeer(size_t peer_idx) {
@@ -527,4 +539,30 @@ void RdmaEndpoint::WaitForCompletion(size_t remote_id, bool poll_until_found,
 
 void RdmaEndpoint::ClearCompletedRecords(size_t remote_id) {
     connections_.at(remote_id).wr_status.completed_wr_ids.clear();
+}
+
+void RdmaEndpoint::BindToZmqEndpoint(const char *endpoint) {
+    CHECK_EQ(zmq_bind(zmq_server_socket_, endpoint), 0)
+        << "Failed to bind to " << endpoint << ": " << zmq_strerror(zmq_errno());
+}
+
+void RdmaEndpoint::Listen() {
+    size_t remote_id = PrepareNewConnection();
+    ExchangePeerInfo(zmq_server_socket_, remote_id, false);
+    ConnectPeer(remote_id);
+
+    LOG(INFO) << "Queue pair " << remote_id << " is ready to send";
+}
+
+void RdmaEndpoint::Connect(const char *endpoint) {
+    CHECK_EQ(zmq_connect(zmq_client_socket_, endpoint), 0)
+        << "Failed to connect " << endpoint << ": " << zmq_strerror(zmq_errno());
+
+    size_t remote_id = PrepareNewConnection();
+    ExchangePeerInfo(zmq_client_socket_, remote_id, true);
+    ConnectPeer(remote_id);
+
+    CHECK_EQ(zmq_disconnect(zmq_client_socket_, endpoint), 0);
+
+    LOG(INFO) << "Queue pair " << remote_id << " is ready to send";
 }

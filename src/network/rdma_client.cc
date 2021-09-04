@@ -14,7 +14,6 @@ RdmaClient::RdmaClient(char *ib_dev_name, uint8_t ib_dev_port, volatile unsigned
 
 RdmaClient::~RdmaClient() {
     zmq_close(zmq_socket_);
-    zmq_ctx_destroy(zmq_context_);
 }
 
 void RdmaClient::Connect(const char *endpoint) {

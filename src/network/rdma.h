@@ -61,6 +61,10 @@ class RdmaEndpoint {
     virtual void WaitForCompletion(size_t remote_id, bool poll_until_found, uint64_t target_wr_id);
     virtual void ClearCompletedRecords(size_t remote_id);
 
+    virtual void BindToZmqEndpoint(const char *endpoint);
+    virtual void Listen();
+    virtual void Connect(const char *endpoint);
+
    protected:
     /**
      * @brief Construct a new Rdma Endpoint object
@@ -85,7 +89,9 @@ class RdmaEndpoint {
 
     const static size_t kZmqMessageBufferSize = 1024;
     void *zmq_context_;
-    void *zmq_socket_;
+    void *zmq_server_socket_;  // ZMQ socket to listen incoming connections
+    void *zmq_client_socket_;  // ZMQ socket to add connection with remote
+    [[deprecated]] void *zmq_socket_;
 
     const static size_t kMaxBatchSize = 32;
     // These templates are filled with metadata that can be reused across multiple requests.
@@ -126,8 +132,7 @@ class RdmaEndpoint {
 
     // Initializes the new queue pair and returns the index of `connections_` for new connection
     size_t PrepareNewConnection();
-    // Gets the remote peer's RDMA connection information
-    void ExchangePeerInfo(size_t peer_idx, bool send_first);
+    [[deprecated]] void ExchangePeerInfo(size_t peer_idx, bool send_first);
     // Modifies the queue pair state to ready-to-send
     void ConnectPeer(size_t peer_idx);
 
@@ -140,6 +145,8 @@ class RdmaEndpoint {
     void PopulateLocalInfo(size_t peer_idx);
     void PrepareCompletionQueue(size_t peer_idx);
     void PrepareQueuePair(size_t peer_idx);
+    // Gets the remote peer's RDMA connection information
+    void ExchangePeerInfo(void *zmq_socket, size_t peer_idx, bool send_first);
 
     inline void FillOutWriteWorkRequest(
         size_t remote_id, const std::vector<std::tuple<uint64_t, uint64_t, uint32_t>> &requests,
@@ -149,22 +156,22 @@ class RdmaEndpoint {
 };
 
 // wait for clients to connect, implement connect and disconnect
-class RdmaServer : public RdmaEndpoint {
+class [[deprecated]] RdmaServer : public RdmaEndpoint {
    public:
     RdmaServer(const char *endpoint, char *ib_dev_name, uint8_t ib_dev_port,
                volatile unsigned char *buffer, size_t buffer_size, uint32_t max_send_count,
                uint32_t max_recv_count, ibv_qp_type qp_type);
     ~RdmaServer();
-    void Listen();
+    virtual void Listen() override;
 };
 
 // connect to an rdma server
-class RdmaClient : public RdmaEndpoint {
+class [[deprecated]] RdmaClient : public RdmaEndpoint {
    public:
     RdmaClient(char *ib_dev_name, uint8_t ib_dev_port, volatile unsigned char *buffer,
                size_t buffer_size, uint32_t max_send_count, uint32_t max_recv_count,
                ibv_qp_type qp_type);
     ~RdmaClient();
-    void Connect(const char *endpoint);
+    virtual void Connect(const char *endpoint) override;
     void Disconnect();
 };
