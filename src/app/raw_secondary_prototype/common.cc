@@ -40,28 +40,6 @@ void SerializeKvpAsMsg(volatile unsigned char* const buf, const KeyValuePair& kv
     buf[FLAGS_msg_slot_size - 1] = 0xff;
 }
 
-IdType ExchangeId(RdmaEndpoint& ep, volatile unsigned char* const buf, IdType id,
-                  size_t send_offset, size_t recv_offset, bool send_first) {
-    *reinterpret_cast<volatile IdType*>(buf + send_offset) = id;
-    uint64_t s_wr, r_wr;
-    if (send_first) {
-        s_wr = ep.Send(id, send_offset, sizeof(IdType));
-        r_wr = ep.Recv(id, recv_offset, sizeof(IdType));
-    } else {
-        r_wr = ep.Recv(id, recv_offset, sizeof(IdType));
-        s_wr = ep.Send(id, send_offset, sizeof(IdType));
-    }
-    ep.WaitForCompletion(id, true, s_wr);
-    ep.WaitForCompletion(id, true, r_wr);
-    IdType remote_id = *reinterpret_cast<volatile IdType*>(buf + recv_offset);
-
-    // clear used buffer
-    *reinterpret_cast<volatile IdType*>(buf + send_offset) = 0;
-    *reinterpret_cast<volatile IdType*>(buf + recv_offset) = 0;
-
-    return remote_id;
-}
-
 size_t ComputeMsgBufOffset(IdType s_id, IdType c_id, bool in) {
     int x = in ? 1 : 0;
     return ((FLAGS_server_threads * s_id + c_id) * 2 + x) * FLAGS_msg_slots * FLAGS_msg_slot_size;

@@ -23,7 +23,6 @@ void ServerMain(RdmaServer &server, volatile unsigned char *const buf, const IdT
     volatile unsigned char *const outbuf = buf + out_offset;
     volatile unsigned char *const inbuf = buf + in_offset;
 
-    // const IdType r_id = ExchangeId(server, buf, id, out_offset, in_offset, false);
     const size_t r_in_offset = ComputeMsgBufOffset(id, id, true);
 
     int slot = 0;
@@ -55,7 +54,7 @@ void ServerMain(RdmaServer &server, volatile unsigned char *const buf, const IdT
         slot = (slot + 1) % FLAGS_msg_slots;
 
         if (processed % (FLAGS_rounds / 10) == 0) {
-            RAW_LOG(INFO, "Id: %d, (r_id: %d) Processed: %d", id, id, processed);
+            RAW_LOG(INFO, "s_id: %d, (c_id: %d) Processed: %d", id, id, processed);
         }
     }
 }

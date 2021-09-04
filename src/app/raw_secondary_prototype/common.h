@@ -43,7 +43,4 @@ inline bool CheckMsgPresent(volatile unsigned char* const buf) {
     return buf[FLAGS_msg_slot_size - 1] != 0;
 }
 
-IdType ExchangeId(RdmaEndpoint& ep, volatile unsigned char* const buf, IdType id,
-                  size_t send_offset, size_t recv_offset, bool send_first);
-
 size_t ComputeMsgBufOffset(IdType s_id, IdType c_id, bool in);

@@ -24,7 +24,6 @@ void ClientMain(RdmaClient &client, volatile unsigned char *const buf, IdType id
     volatile unsigned char *const outbuf = buf + out_offset;
     volatile unsigned char *const inbuf = buf + in_offset;
 
-    // const IdType r_id = ExchangeId(client, buf, id, out_offset, in_offset, false);
     const size_t r_in_offset = ComputeMsgBufOffset(id, id, true);
 
     std::queue<int> free_slots, used_slots;
@@ -58,7 +57,7 @@ void ClientMain(RdmaClient &client, volatile unsigned char *const buf, IdType id
             ++sent;
 
             if (sent % (FLAGS_rounds / 10) == 0) {
-                RAW_LOG(INFO, "Id: %d, (r_id: %d) Sent: %d", id, id, sent);
+                RAW_LOG(INFO, "c_id: %d, (s_id: %d) Sent: %d", id, id, sent);
             }
         }
 
@@ -82,7 +81,7 @@ void ClientMain(RdmaClient &client, volatile unsigned char *const buf, IdType id
             ++acked;
 
             if (acked % (FLAGS_rounds / 10) == 0) {
-                RAW_LOG(INFO, "Id: %d, (r_id: %d) Acknowledged: %d", id, id, acked);
+                RAW_LOG(INFO, "c_id: %d, (s_id: %d) Acknowledged: %d", id, id, acked);
             }
         }
     }
