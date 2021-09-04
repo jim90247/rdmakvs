@@ -11,6 +11,13 @@
 #include "app/raw_secondary_prototype/common.h"
 #include "network/rdma.h"
 
+// TODO: compute id when multiple client nodes is possible
+inline IdType GetClientNodeId(IdType c_id) { return 0; }
+
+inline IdType GetRespConnIdx(IdType s_id, IdType c_id) {
+    return FLAGS_client_threads + GetClientNodeId(c_id) * FLAGS_server_threads + s_id;
+}
+
 void ServerMain(RdmaEndpoint &ep, volatile unsigned char *const buf, const IdType id) {
     // These fields should not be modified
     size_t *out_offset = new size_t[FLAGS_client_threads],
@@ -52,9 +59,9 @@ void ServerMain(RdmaEndpoint &ep, volatile unsigned char *const buf, const IdTyp
 
             // send response
             SerializeKvpAsMsg(outbuf[c] + slot_offset, kvp);
-            auto wr = ep.Write(false, id, out_offset[c] + slot_offset,
-                                   r_in_offset[c] + slot_offset, FLAGS_msg_slot_size);
-            ep.WaitForCompletion(id, true, wr);
+            auto wr = ep.Write(false, GetRespConnIdx(id, c), out_offset[c] + slot_offset,
+                               r_in_offset[c] + slot_offset, FLAGS_msg_slot_size);
+            ep.WaitForCompletion(GetRespConnIdx(id, c), true, wr);
 
             ++processed[c];
             ++tot_processed;
@@ -76,11 +83,18 @@ int main(int argc, char **argv) {
 
     volatile unsigned char *buffer = new volatile unsigned char[buf_size]();
     RdmaEndpoint ep(nullptr, 0, buffer, buf_size, 128, 128, IBV_QPT_RC);
-    ep.BindToZmqEndpoint(FLAGS_endpoint.c_str());
+    ep.BindToZmqEndpoint(FLAGS_kvs_server.c_str());
 
-    for (int i = 0; i < FLAGS_server_threads; i++) {
+    for (int i = 0; i < FLAGS_client_threads; i++) {
         ep.Listen();
-        DLOG(INFO) << "Client " << i << " connected";
+        DLOG(INFO) << "Request QP " << i << " connected";
+    }
+
+    for (int cnode = 0; cnode < FLAGS_client_nodes; cnode++) {
+        for (int i = 0; i < FLAGS_server_threads; i++) {
+            ep.Connect(FLAGS_kvs_client.c_str());
+            DLOG(INFO) << "Response QP " << i << " with client node " << cnode << " connected.";
+        }
     }
     std::vector<std::thread> threads;
     for (int i = 0; i < FLAGS_server_threads; i++) {

@@ -7,12 +7,14 @@
 
 #include "network/rdma.h"
 
-DECLARE_string(endpoint);
+DECLARE_string(kvs_server);
+DECLARE_string(kvs_client);
 DECLARE_uint64(msg_slot_size);
 DECLARE_uint64(msg_slots);
 DECLARE_int32(rounds);
 DECLARE_int32(server_threads);
 DECLARE_int32(client_threads);
+DECLARE_int32(client_nodes);
 
 using std::int64_t;
 using std::size_t;

@@ -107,8 +107,13 @@ int main(int argc, char **argv) {
     RdmaEndpoint ep(nullptr, 0, buffer, buf_size, 128, 128, IBV_QPT_RC);
 
     for (int i = 0; i < FLAGS_client_threads; i++) {
-        ep.Connect(FLAGS_endpoint.c_str());
-        DLOG(INFO) << "Thread " << i << " connected to server.";
+        ep.Connect(FLAGS_kvs_server.c_str());
+        DLOG(INFO) << "Request QP " << i << " connected.";
+    }
+    ep.BindToZmqEndpoint(FLAGS_kvs_client.c_str());
+    for (int i = 0; i < FLAGS_server_threads; i++) {
+        ep.Listen();
+        DLOG(INFO) << "Response QP " << i << " connected.";
     }
     std::vector<std::thread> threads;
     for (int i = 0; i < FLAGS_client_threads; i++) {
