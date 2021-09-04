@@ -11,50 +11,59 @@
 #include "app/raw_secondary_prototype/common.h"
 #include "network/rdma.h"
 
-inline std::string GetValueStr(int i) {
-    std::stringstream ss;
-    ss << "'key=" << i << "'";
-    return ss.str();
-}
-
 void ServerMain(RdmaServer &server, volatile unsigned char *const buf, const IdType id) {
-    const size_t out_offset = ComputeMsgBufOffset(id, id, false),
-                 in_offset = ComputeMsgBufOffset(id, id, true);
-    volatile unsigned char *const outbuf = buf + out_offset;
-    volatile unsigned char *const inbuf = buf + in_offset;
+    // These fields should not be modified
+    size_t *out_offset = new size_t[FLAGS_client_threads],
+           *r_in_offset = new size_t[FLAGS_client_threads];
 
-    const size_t r_in_offset = ComputeMsgBufOffset(id, id, true);
+    volatile unsigned char **outbuf = new volatile unsigned char *[FLAGS_client_threads],
+                           **inbuf = new volatile unsigned char *[FLAGS_client_threads];
 
-    int slot = 0;
-    int processed = 0;
+    for (int c = 0; c < FLAGS_client_threads; c++) {
+        out_offset[c] = ComputeMsgBufOffset(id, c, false);
+        r_in_offset[c] = ComputeMsgBufOffset(id, c, true);
+        outbuf[c] = buf + out_offset[c];
+        inbuf[c] = buf + ComputeMsgBufOffset(id, c, true);
+    }
 
-    while (processed < FLAGS_rounds) {
-        // check message present
-        size_t slot_offset = ComputeSlotOffset(slot);
-        if (!CheckMsgPresent(inbuf + slot_offset)) {
-            continue;
-        }
+    std::vector<int> slot(FLAGS_client_threads, 0);
 
-        // get message
-        auto kvp = ParseKvpFromMsg(inbuf + slot_offset);
-        std::string expected_value = GetValueStr(processed);
-        CHECK_EQ(processed, kvp.key);
-        CHECK_STREQ(expected_value.c_str(), kvp.value);
+    int tot_processed = 0, tot_rounds = FLAGS_rounds * FLAGS_client_threads;
+    std::vector<int> processed(FLAGS_client_threads, 0);
 
-        // clear this slot's incoming buffer for reuse in future
-        std::fill(inbuf + slot_offset, inbuf + slot_offset + FLAGS_msg_slot_size, 0);
+    while (tot_processed < tot_rounds) {
+        for (int c = 0; c < FLAGS_client_threads; c++) {
+            if (processed[c] >= FLAGS_rounds) {
+                continue;
+            }
+            // check message present
+            size_t slot_offset = ComputeSlotOffset(slot[c]);
+            if (!CheckMsgPresent(inbuf[c] + slot_offset)) {
+                continue;
+            }
 
-        // send response
-        SerializeKvpAsMsg(outbuf + slot_offset, kvp);
-        auto wr = server.Write(false, id, out_offset + slot_offset, r_in_offset + slot_offset,
-                               FLAGS_msg_slot_size);
-        server.WaitForCompletion(id, true, wr);
+            // get message
+            auto kvp = ParseKvpFromMsg(inbuf[c] + slot_offset);
+            std::string expected_value = GetValueStr(id, c, processed[c]);
+            CHECK_EQ(processed[c], kvp.key);
+            CHECK_STREQ(expected_value.c_str(), kvp.value);
 
-        processed++;
-        slot = (slot + 1) % FLAGS_msg_slots;
+            // clear this slot's incoming buffer for reuse in future
+            std::fill(inbuf[c] + slot_offset, inbuf[c] + slot_offset + FLAGS_msg_slot_size, 0);
 
-        if (processed % (FLAGS_rounds / 10) == 0) {
-            RAW_LOG(INFO, "s_id: %d, (c_id: %d) Processed: %d", id, id, processed);
+            // send response
+            SerializeKvpAsMsg(outbuf[c] + slot_offset, kvp);
+            auto wr = server.Write(false, id, out_offset[c] + slot_offset,
+                                   r_in_offset[c] + slot_offset, FLAGS_msg_slot_size);
+            server.WaitForCompletion(id, true, wr);
+
+            ++processed[c];
+            ++tot_processed;
+            slot[c] = (slot[c] + 1) % FLAGS_msg_slots;
+
+            if (processed[c] % (FLAGS_rounds / 10) == 0) {
+                RAW_LOG(INFO, "s_id: %d, (c_id: %d) Processed: %d", id, c, processed[c]);
+            }
         }
     }
 }
