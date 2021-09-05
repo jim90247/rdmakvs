@@ -4,6 +4,7 @@ project(src)
 add_subdirectory(proto)
 add_subdirectory(network)
 add_subdirectory(messaging)
+add_subdirectory(util)
 
 add_subdirectory(app)
 
