@@ -36,15 +36,27 @@ KeyValuePair KeyValuePair::ParseFrom(volatile unsigned char* buf) {
 
 KeyValuePair KeyValuePair::Create(KeyType key, ValueSizeType size, const char* value) {
     CHECK_NOTNULL(value);
-    KeyValuePair kvp{.key = key, .size = size, .signal = 1};
+    CHECK_LE(size, kMaxValueSize);
+    KeyValuePair kvp{.key = key, .size = size, .lock = 0};
     std::copy(value, value + size, kvp.value);
     return kvp;
 }
 
 void KeyValuePair::SerializeTo(volatile unsigned char* const buf) const {
-    // TODO: implement locking to prevent write collision
     auto ptr = reinterpret_cast<const unsigned char*>(this);
     std::copy(ptr, ptr + sizeof(KeyValuePair), buf);
+}
+
+// TODO: verify the effectiveness of this implementation
+void KeyValuePair::AtomicSerializeTo(volatile unsigned char* const buf) const {
+    volatile unsigned char* l = buf + offsetof(KeyValuePair, lock);
+    while (__sync_val_compare_and_swap(l, 0, 1) == 1)
+        ;
+    auto ptr = reinterpret_cast<const unsigned char*>(this);
+    std::copy(ptr, ptr + offsetof(KeyValuePair, lock), buf);
+    // unlock key, should not fail as this is the only thread operating on the key
+    unsigned char prev = __sync_val_compare_and_swap(l, 1, 0);
+    DCHECK_EQ(prev, 1);
 }
 
 KeyValuePair ParseKvpFromMsg(volatile unsigned char* const buf) {

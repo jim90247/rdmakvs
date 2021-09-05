@@ -31,11 +31,12 @@ struct KeyValuePair {
     KeyType key;
     ValueSizeType size;
     char value[kMaxValueSize];
-    int signal;
+    unsigned char lock;
 
     static KeyValuePair Create(KeyType key, ValueSizeType size, const char* value);
     static KeyValuePair ParseFrom(volatile unsigned char* buf);
     void SerializeTo(volatile unsigned char* const buf) const;
+    void AtomicSerializeTo(volatile unsigned char* const buf) const;
 };
 
 KeyValuePair ParseKvpFromMsg(volatile unsigned char* const buf);

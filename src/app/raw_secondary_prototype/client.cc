@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <map>
 #include <queue>
+#include <random>
 #include <sstream>
 #include <thread>
 #include <vector>
@@ -13,8 +14,11 @@
 #include "app/raw_secondary_prototype/common.h"
 #include "network/rdma.h"
 #include "util/node_config.h"
+#include "util/zipf_generator.h"
 
 DEFINE_string(node_name, "", "Node name defined in node config");
+DEFINE_uint64(readbuf_slots, 128, "Buffer slots for GET using RDMA read");
+DEFINE_double(put_frac, 0.5, "Fraction of operations being PUT");
 
 std::vector<IdType> id2gid;  // client local id to global client id
 int local_threads;           // number of threads in this client
@@ -41,6 +45,28 @@ void ReadClientInfo() {
                                << FLAGS_client_node_config;
 }
 
+enum class KvsOp {
+    GET,
+    PUT,
+};
+
+KvsOp NextOp() {
+    static thread_local std::mt19937_64 gen(42);
+    static thread_local std::uniform_real_distribution<double> distrib(0, 1);
+    if (distrib(gen) < FLAGS_put_frac) {
+        return KvsOp::PUT;
+    } else {
+        return KvsOp::GET;
+    }
+}
+
+KeyType NextKey() {
+    static thread_local ZipfGenerator zipf(FLAGS_kvs_entries, 0.99);
+    return zipf.GetNumber();
+}
+
+inline size_t ComputeReadSlotOffset(int sid) { return sid * sizeof(KeyValuePair); }
+
 void ClientMain(RdmaEndpoint &ep, volatile unsigned char *const buf, IdType id) {
     // These fields should not be modified
     const IdType gid = id2gid[id];
@@ -48,6 +74,12 @@ void ClientMain(RdmaEndpoint &ep, volatile unsigned char *const buf, IdType id) 
            *r_in_offset = new size_t[FLAGS_server_threads];
     volatile unsigned char **outbuf = new volatile unsigned char *[FLAGS_server_threads],
                            **inbuf = new volatile unsigned char *[FLAGS_server_threads];
+
+    const size_t r_kvs_offset = FLAGS_server_threads * FLAGS_total_client_threads *
+                                FLAGS_msg_slot_size * FLAGS_msg_slots * 2;
+    const size_t read_offset =
+        FLAGS_server_threads * local_threads * FLAGS_msg_slot_size * FLAGS_msg_slots * 2;
+    volatile unsigned char *const readbuf = buf + read_offset;
 
     for (int s = 0; s < FLAGS_server_threads; s++) {
         out_offset[s] = ComputeClientMsgBufOffset(s, id, local_threads, false);
@@ -66,8 +98,26 @@ void ClientMain(RdmaEndpoint &ep, volatile unsigned char *const buf, IdType id) 
     int tot_acked = 0, tot_sent = 0, tot_put_rounds = FLAGS_put_rounds * FLAGS_server_threads;
     std::vector<int> acked(FLAGS_server_threads), sent(FLAGS_server_threads);
 
+    IdType s = 0;
+    auto increment_sid = [&s]() {
+        s++;
+        if (s == FLAGS_server_threads) {
+            s = 0;
+        }
+    };
+    int rslot = 0;
+    long get_rounds = 0;
+    auto increment_rslot = [&rslot, &get_rounds]() {
+        rslot++;
+        if (rslot == FLAGS_readbuf_slots) {
+            rslot = 0;
+        }
+        get_rounds++;
+    };
+
     while (tot_acked < tot_put_rounds) {
-        for (int s = 0; s < FLAGS_server_threads; s++) {
+        auto op = NextOp();
+        if (op == KvsOp::PUT) {
             if (sent[s] < FLAGS_put_rounds && !free_slots[s].empty()) {
                 // create message
                 std::string value = GetValueStr(s, gid, sent[s]);
@@ -122,6 +172,27 @@ void ClientMain(RdmaEndpoint &ep, volatile unsigned char *const buf, IdType id) 
                             acked[s], kvp.value);
                 }
             }
+            increment_sid();
+        } else if (op == KvsOp::GET) {
+            KeyType k = NextKey();
+
+            // send request
+            size_t key_offset = ComputeKvBufOffset(k);
+            size_t rslot_offset = ComputeReadSlotOffset(rslot);
+            auto wr = ep.Read(id, read_offset + rslot_offset, r_kvs_offset + key_offset,
+                              sizeof(KeyValuePair));
+            ep.WaitForCompletion(id, true, wr);
+
+            // check value
+            auto kvp = KeyValuePair::ParseFrom(readbuf + rslot_offset);
+            if (kvp.lock == 0) {
+                // FIXME: this check fails when multiple client threads READ at the same time
+                CHECK_EQ((kvp.key & (FLAGS_kvs_entries - 1)), (k & (FLAGS_kvs_entries - 1)))
+                    << "key=" << k << ", received value='" << kvp.value
+                    << "', get rounds=" << get_rounds;
+            }
+
+            increment_rslot();
         }
     }
 }
@@ -132,10 +203,13 @@ int main(int argc, char **argv) {
 
     ReadClientInfo();
 
-    size_t buf_size =
-        FLAGS_server_threads * local_threads * FLAGS_msg_slot_size * FLAGS_msg_slots * 2;
+    size_t buf_size = FLAGS_server_threads * local_threads * FLAGS_msg_slot_size * FLAGS_msg_slots *
+                          2 +                                      // request/response
+                      FLAGS_readbuf_slots * sizeof(KeyValuePair);  // buffer for GET via RDMA read
 
-    volatile unsigned char *buffer = new volatile unsigned char[buf_size]();
+    // volatile unsigned char *buffer = new volatile unsigned char[buf_size]();
+    volatile unsigned char *buffer =
+        reinterpret_cast<volatile unsigned char *>(aligned_alloc(4096, buf_size));
     RdmaEndpoint ep(nullptr, 0, buffer, buf_size, 128, 128, IBV_QPT_RC);
 
     for (int i = 0; i < local_threads; i++) {

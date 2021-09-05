@@ -82,7 +82,8 @@ void ServerMain(RdmaEndpoint &ep, volatile unsigned char *const buf, const IdTyp
 
             // write to key value storage
             size_t key_offset = ComputeKvBufOffset(kvp.key);
-            kvp.SerializeTo(kvsbuf + key_offset);
+            // TODO: verify the necessity of atomic write
+            kvp.AtomicSerializeTo(kvsbuf + key_offset);
 
             // clear this slot's incoming buffer for reuse in future
             std::fill(inbuf[c] + slot_offset, inbuf[c] + slot_offset + FLAGS_msg_slot_size, 0);
@@ -104,6 +105,15 @@ void ServerMain(RdmaEndpoint &ep, volatile unsigned char *const buf, const IdTyp
     }
 }
 
+void InitializeKvs(volatile unsigned char *kvsbuf) {
+    for (KeyType k = 0; k < FLAGS_kvs_entries; k++) {
+        size_t key_offset = ComputeKvBufOffset(k);
+        auto v = std::to_string(k);
+        auto kvp = KeyValuePair::Create(k, v.length(), v.c_str());
+        kvp.SerializeTo(kvsbuf + key_offset);
+    }
+}
+
 int main(int argc, char **argv) {
     gflags::ParseCommandLineFlags(&argc, &argv, true);
     google::InitGoogleLogging(argv[0]);
@@ -115,6 +125,9 @@ int main(int argc, char **argv) {
                       + sizeof(KeyValuePair) * FLAGS_kvs_entries;  // actual key value store
 
     volatile unsigned char *buffer = new volatile unsigned char[buf_size]();
+    InitializeKvs(buffer + FLAGS_server_threads * FLAGS_total_client_threads * FLAGS_msg_slot_size *
+                               FLAGS_msg_slots * 2);
+
     RdmaEndpoint ep(nullptr, 0, buffer, buf_size, 128, 128, IBV_QPT_RC);
     ep.BindToZmqEndpoint(FLAGS_kvs_server.c_str());
 
