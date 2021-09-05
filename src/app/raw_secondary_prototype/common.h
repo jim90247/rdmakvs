@@ -15,6 +15,8 @@ DECLARE_int32(server_threads);
 DECLARE_int32(total_client_threads);
 DECLARE_string(client_node_config);
 
+DECLARE_uint64(kvs_entries);
+
 using std::int64_t;
 using std::size_t;
 using std::uint64_t;
@@ -55,6 +57,10 @@ inline size_t ComputeServerMsgBufOffset(IdType s_id, IdType c_id, bool in) {
 inline size_t ComputeClientMsgBufOffset(IdType s_id, IdType c_id, int client_threads, bool in) {
     int x = in ? 1 : 0;
     return ((client_threads * s_id + c_id) * 2 + x) * FLAGS_msg_slots * FLAGS_msg_slot_size;
+}
+
+inline size_t ComputeKvBufOffset(KeyType key) {
+    return sizeof(KeyValuePair) * (key & (FLAGS_kvs_entries - 1));
 }
 
 inline std::string GetValueStr(int s, int c, int r) {

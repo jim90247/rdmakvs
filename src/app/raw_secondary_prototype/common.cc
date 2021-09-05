@@ -1,6 +1,7 @@
 #include "app/raw_secondary_prototype/common.h"
 
 #include <algorithm>
+#include <cstdio>
 
 #include "glog/logging.h"
 
@@ -14,6 +15,18 @@ DEFINE_int32(server_threads, 1, "Server threads");
 // TODO: compute total client threads from config file
 DEFINE_int32(total_client_threads, 1, "Total client threads");
 DEFINE_string(client_node_config, "nodeconf.json", "Path to client node config file");
+
+DEFINE_uint64(kvs_entries, 65536, "Number of key-value pairs to store. Must be a power of 2.");
+
+static bool CheckPowerOfTwo(const char* flagname, gflags::uint64 value) {
+    if ((value & (value - 1)) == 0) {
+        return true;
+    }
+    printf("%s is not a power of 2!", flagname);
+    return false;
+}
+
+DEFINE_validator(kvs_entries, &CheckPowerOfTwo);
 
 KeyValuePair KeyValuePair::ParseFrom(volatile unsigned char* buf) {
     KeyValuePair kvp;
@@ -29,6 +42,7 @@ KeyValuePair KeyValuePair::Create(KeyType key, ValueSizeType size, const char* v
 }
 
 void KeyValuePair::SerializeTo(volatile unsigned char* const buf) const {
+    // TODO: implement locking to prevent write collision
     auto ptr = reinterpret_cast<const unsigned char*>(this);
     std::copy(ptr, ptr + sizeof(KeyValuePair), buf);
 }

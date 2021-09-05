@@ -47,6 +47,9 @@ void ServerMain(RdmaEndpoint &ep, volatile unsigned char *const buf, const IdTyp
            *r_in_offset = new size_t[FLAGS_total_client_threads];
     volatile unsigned char **outbuf = new volatile unsigned char *[FLAGS_total_client_threads],
                            **inbuf = new volatile unsigned char *[FLAGS_total_client_threads];
+    const size_t kvs_offset = FLAGS_server_threads * FLAGS_total_client_threads *
+                              FLAGS_msg_slot_size * FLAGS_msg_slots * 2;
+    volatile unsigned char *const kvsbuf = buf + kvs_offset;
 
     for (int c = 0; c < FLAGS_total_client_threads; c++) {
         out_offset[c] = ComputeServerMsgBufOffset(id, c, false);
@@ -77,6 +80,10 @@ void ServerMain(RdmaEndpoint &ep, volatile unsigned char *const buf, const IdTyp
             CHECK_EQ(processed[c], kvp.key);
             CHECK_STREQ(expected_value.c_str(), kvp.value);
 
+            // write to key value storage
+            size_t key_offset = ComputeKvBufOffset(kvp.key);
+            kvp.SerializeTo(kvsbuf + key_offset);
+
             // clear this slot's incoming buffer for reuse in future
             std::fill(inbuf[c] + slot_offset, inbuf[c] + slot_offset + FLAGS_msg_slot_size, 0);
 
@@ -104,7 +111,8 @@ int main(int argc, char **argv) {
     ReadClientInfo();
 
     size_t buf_size = FLAGS_server_threads * FLAGS_total_client_threads * FLAGS_msg_slot_size *
-                      FLAGS_msg_slots * 2;
+                          FLAGS_msg_slots * 2                      // request/response
+                      + sizeof(KeyValuePair) * FLAGS_kvs_entries;  // actual key value store
 
     volatile unsigned char *buffer = new volatile unsigned char[buf_size]();
     RdmaEndpoint ep(nullptr, 0, buffer, buf_size, 128, 128, IBV_QPT_RC);
