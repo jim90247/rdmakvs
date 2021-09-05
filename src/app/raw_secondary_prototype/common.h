@@ -8,13 +8,12 @@
 #include "network/rdma.h"
 
 DECLARE_string(kvs_server);
-DECLARE_string(kvs_client);
 DECLARE_uint64(msg_slot_size);
 DECLARE_uint64(msg_slots);
 DECLARE_int32(rounds);
 DECLARE_int32(server_threads);
-DECLARE_int32(client_threads);
-DECLARE_int32(client_nodes);
+DECLARE_int32(total_client_threads);
+DECLARE_string(client_node_config);
 
 using std::int64_t;
 using std::size_t;
@@ -47,7 +46,16 @@ inline bool CheckMsgPresent(volatile unsigned char* const buf) {
     return buf[FLAGS_msg_slot_size - 1] != 0;
 }
 
-size_t ComputeMsgBufOffset(IdType s_id, IdType c_id, bool in);
+inline size_t ComputeServerMsgBufOffset(IdType s_id, IdType c_id, bool in) {
+    int x = in ? 1 : 0;
+    return ((FLAGS_total_client_threads * s_id + c_id) * 2 + x) * FLAGS_msg_slots *
+           FLAGS_msg_slot_size;
+}
+
+inline size_t ComputeClientMsgBufOffset(IdType s_id, IdType c_id, int client_threads, bool in) {
+    int x = in ? 1 : 0;
+    return ((client_threads * s_id + c_id) * 2 + x) * FLAGS_msg_slots * FLAGS_msg_slot_size;
+}
 
 inline std::string GetValueStr(int s, int c, int r) {
     std::stringstream ss;

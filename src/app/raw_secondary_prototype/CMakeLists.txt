@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.10)
 
-set(LIBRARIES network glog gflags pthread)
+set(LIBRARIES network util glog gflags pthread)
 
 set(COMMON_SRCS common.h common.cc)
 

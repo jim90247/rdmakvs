@@ -1,0 +1,12 @@
+{
+    "41": {
+        "endpoint": "tcp://192.168.223.1:7889",
+        "threads": 2,
+        "type": "server"
+    },
+    "42": {
+        "endpoint": "tcp://192.168.223.2:7889",
+        "threads": 4,
+        "type": "client"
+    }
+}

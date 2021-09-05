@@ -4,14 +4,16 @@
 
 #include "glog/logging.h"
 
+// TODO: parse server zmq endpoint from config file
 DEFINE_string(kvs_server, "tcp://192.168.223.1:7889", "Key value store server Zmq endpoint");
-DEFINE_string(kvs_client, "tcp://192.168.223.2:7889", "Key value store client Zmq endpoint");
 DEFINE_uint64(msg_slot_size, 128, "Size of each message slot");
 DEFINE_uint64(msg_slots, 4096, "Message slots for in/out message each");
 DEFINE_int32(rounds, 100, "Rounds");
+// TODO: parse server threads from config file
 DEFINE_int32(server_threads, 1, "Server threads");
-DEFINE_int32(client_threads, 1, "Client threads");
-DEFINE_int32(client_nodes, 1, "Number of nodes that client threads comes from");
+// TODO: compute total client threads from config file
+DEFINE_int32(total_client_threads, 1, "Total client threads");
+DEFINE_string(client_node_config, "nodeconf.json", "Path to client node config file");
 
 KeyValuePair KeyValuePair::ParseFrom(volatile unsigned char* buf) {
     KeyValuePair kvp;
@@ -40,9 +42,4 @@ void SerializeKvpAsMsg(volatile unsigned char* const buf, const KeyValuePair& kv
     kvp.SerializeTo(buf + sizeof(MsgSizeType));
     // trailing byte
     buf[FLAGS_msg_slot_size - 1] = 0xff;
-}
-
-size_t ComputeMsgBufOffset(IdType s_id, IdType c_id, bool in) {
-    int x = in ? 1 : 0;
-    return ((FLAGS_client_threads * s_id + c_id) * 2 + x) * FLAGS_msg_slots * FLAGS_msg_slot_size;
 }
