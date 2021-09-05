@@ -60,12 +60,12 @@ void ServerMain(RdmaEndpoint &ep, volatile unsigned char *const buf, const IdTyp
 
     std::vector<int> slot(FLAGS_total_client_threads, 0);
 
-    int tot_processed = 0, tot_rounds = FLAGS_rounds * FLAGS_total_client_threads;
+    int tot_processed = 0, tot_put_rounds = FLAGS_put_rounds * FLAGS_total_client_threads;
     std::vector<int> processed(FLAGS_total_client_threads, 0);
 
-    while (tot_processed < tot_rounds) {
+    while (tot_processed < tot_put_rounds) {
         for (int c = 0; c < FLAGS_total_client_threads; c++) {
-            if (processed[c] >= FLAGS_rounds) {
+            if (processed[c] >= FLAGS_put_rounds) {
                 continue;
             }
             // check message present
@@ -97,7 +97,7 @@ void ServerMain(RdmaEndpoint &ep, volatile unsigned char *const buf, const IdTyp
             ++tot_processed;
             slot[c] = (slot[c] + 1) % FLAGS_msg_slots;
 
-            if (processed[c] % (FLAGS_rounds / 10) == 0) {
+            if (processed[c] % (FLAGS_put_rounds / 10) == 0) {
                 RAW_LOG(INFO, "s_id: %d, (c_id: %d) Processed: %d", id, c, processed[c]);
             }
         }

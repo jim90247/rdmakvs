@@ -10,7 +10,7 @@
 DECLARE_string(kvs_server);
 DECLARE_uint64(msg_slot_size);
 DECLARE_uint64(msg_slots);
-DECLARE_int32(rounds);
+DECLARE_int32(put_rounds);
 DECLARE_int32(server_threads);
 DECLARE_int32(total_client_threads);
 DECLARE_string(client_node_config);

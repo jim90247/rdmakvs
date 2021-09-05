@@ -63,12 +63,12 @@ void ClientMain(RdmaEndpoint &ep, volatile unsigned char *const buf, IdType id) 
         }
     }
 
-    int tot_acked = 0, tot_sent = 0, tot_rounds = FLAGS_rounds * FLAGS_server_threads;
+    int tot_acked = 0, tot_sent = 0, tot_put_rounds = FLAGS_put_rounds * FLAGS_server_threads;
     std::vector<int> acked(FLAGS_server_threads), sent(FLAGS_server_threads);
 
-    while (tot_acked < tot_rounds) {
+    while (tot_acked < tot_put_rounds) {
         for (int s = 0; s < FLAGS_server_threads; s++) {
-            if (sent[s] < FLAGS_rounds && !free_slots[s].empty()) {
+            if (sent[s] < FLAGS_put_rounds && !free_slots[s].empty()) {
                 // create message
                 std::string value = GetValueStr(s, gid, sent[s]);
                 auto kvp = KeyValuePair::Create(sent[s], value.length() + 1, value.c_str());
@@ -92,12 +92,12 @@ void ClientMain(RdmaEndpoint &ep, volatile unsigned char *const buf, IdType id) 
                 ++sent[s];
                 ++tot_sent;
 
-                if (sent[s] % (FLAGS_rounds / 10) == 0) {
+                if (sent[s] % (FLAGS_put_rounds / 10) == 0) {
                     RAW_LOG(INFO, "c_id: %d, (s_id: %d) Sent: %d", id, s, sent[s]);
                 }
             }
 
-            while (!used_slots[s].empty() && acked[s] < FLAGS_rounds) {
+            while (!used_slots[s].empty() && acked[s] < FLAGS_put_rounds) {
                 // check message present
                 int slot = used_slots[s].front();
                 size_t slot_offset = ComputeSlotOffset(slot);
@@ -117,7 +117,7 @@ void ClientMain(RdmaEndpoint &ep, volatile unsigned char *const buf, IdType id) 
                 ++acked[s];
                 ++tot_acked;
 
-                if (acked[s] % (FLAGS_rounds / 10) == 0) {
+                if (acked[s] % (FLAGS_put_rounds / 10) == 0) {
                     RAW_LOG(INFO, "c_id: %d, (s_id: %d) Acknowledged: %d (last: '%s')", id, s,
                             acked[s], kvp.value);
                 }
