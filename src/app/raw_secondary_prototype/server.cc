@@ -76,9 +76,11 @@ void ServerMain(RdmaEndpoint &ep, volatile unsigned char *const buf, const IdTyp
 
             // get message
             auto kvp = ParseKvpFromMsg(inbuf[c] + slot_offset);
+#ifndef NDEBUG
             std::string expected_value = GetValueStr(id, c, processed[c]);
-            CHECK_EQ(processed[c], kvp.key);
-            CHECK_STREQ(expected_value.c_str(), kvp.value);
+            DCHECK_EQ(processed[c], kvp.key);
+            DCHECK_STREQ(expected_value.c_str(), kvp.value);
+#endif
 
             // write to key value storage
             size_t key_offset = ComputeKvBufOffset(kvp.key);
@@ -92,14 +94,16 @@ void ServerMain(RdmaEndpoint &ep, volatile unsigned char *const buf, const IdTyp
             SerializeKvpAsMsg(outbuf[c] + slot_offset, kvp);
             auto wr = ep.Write(false, GetRespConnIdx(id, c), out_offset[c] + slot_offset,
                                r_in_offset[c] + slot_offset, FLAGS_msg_slot_size);
-            ep.WaitForCompletion(GetRespConnIdx(id, c), true, wr);
+            // Receiving next request using this same slot is an indicator that this WRITE has
+            // completed
+            // ep.WaitForCompletion(GetRespConnIdx(id, c), true, wr);
 
             ++processed[c];
             ++tot_processed;
             slot[c] = (slot[c] + 1) % FLAGS_msg_slots;
 
             if (processed[c] % (FLAGS_put_rounds / 10) == 0) {
-                RAW_LOG(INFO, "s_id: %d, (c_id: %d) Processed: %d", id, c, processed[c]);
+                RAW_DLOG(INFO, "s_id: %d, (c_id: %d) Processed: %d", id, c, processed[c]);
             }
         }
     }

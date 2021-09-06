@@ -25,7 +25,7 @@ using ValueSizeType = int;
 using MsgSizeType = int;
 using IdType = int;
 
-constexpr ValueSizeType kMaxValueSize = 64;
+constexpr ValueSizeType kMaxValueSize = 32;
 
 struct KeyValuePair {
     KeyType key;
@@ -66,6 +66,6 @@ inline size_t ComputeKvBufOffset(KeyType key) {
 
 inline std::string GetValueStr(int s, int c, int r) {
     std::stringstream ss;
-    ss << "server=" << s << ", client=" << c << ", round=" << r;
+    ss << "s=" << s << ", c=" << c << ", r=" << r;
     return ss.str();
 }

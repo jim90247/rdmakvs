@@ -7,7 +7,7 @@
 
 // TODO: parse server zmq endpoint from config file
 DEFINE_string(kvs_server, "tcp://192.168.223.1:7889", "Key value store server Zmq endpoint");
-DEFINE_uint64(msg_slot_size, 128, "Size of each message slot");
+DEFINE_uint64(msg_slot_size, 64, "Size of each message slot");
 DEFINE_uint64(msg_slots, 4096, "Message slots for in/out message each");
 DEFINE_int32(put_rounds, 100, "PUT Rounds");
 // TODO: parse server threads from config file

@@ -163,8 +163,8 @@ void ClientMain(RdmaEndpoint &ep, volatile unsigned char *const buf, IdType id,
                 // get message
                 auto kvp = ParseKvpFromMsg(inbuf[s] + slot_offset);
                 std::string expected_value = GetValueStr(s, gid, acked[s]);
-                CHECK_EQ(acked[s], kvp.key);
-                CHECK_STREQ(expected_value.c_str(), kvp.value);
+                DCHECK_EQ(acked[s], kvp.key);
+                DCHECK_STREQ(expected_value.c_str(), kvp.value);
 
                 // reclaim
                 used_slots[s].pop();
@@ -173,8 +173,8 @@ void ClientMain(RdmaEndpoint &ep, volatile unsigned char *const buf, IdType id,
                 ++tot_acked;
 
                 if (acked[s] % (FLAGS_put_rounds / 10) == 0) {
-                    RAW_LOG(INFO, "c_id: %d, (s_id: %d) Acknowledged: %d (last: '%s')", id, s,
-                            acked[s], kvp.value);
+                    RAW_DLOG(INFO, "c_id: %d, (s_id: %d) Acknowledged: %d (last: '%s')", id, s,
+                             acked[s], kvp.value);
                 }
             }
             increment_sid();
@@ -251,7 +251,7 @@ int main(int argc, char **argv) {
     for (auto &g : get_iopses) {
         tot_get_iops += g.get();
     }
-    for (auto &p: put_iopses) {
+    for (auto &p : put_iopses) {
         tot_put_iops += p.get();
     }
     LOG(INFO) << "Total GET IOPS: " << tot_get_iops << ", PUT IOPS: " << tot_put_iops;
