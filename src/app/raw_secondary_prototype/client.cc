@@ -4,6 +4,8 @@
 #include <infiniband/verbs.h>
 
 #include <algorithm>
+#include <chrono>
+#include <future>
 #include <map>
 #include <queue>
 #include <random>
@@ -67,7 +69,8 @@ KeyType NextKey() {
 
 inline size_t ComputeReadSlotOffset(int sid) { return sid * sizeof(KeyValuePair); }
 
-void ClientMain(RdmaEndpoint &ep, volatile unsigned char *const buf, IdType id) {
+void ClientMain(RdmaEndpoint &ep, volatile unsigned char *const buf, IdType id,
+                std::promise<double> &&get_iops, std::promise<double> &&put_iops) {
     // These fields should not be modified
     const IdType gid = id2gid[id];
     size_t *out_offset = new size_t[FLAGS_server_threads],
@@ -116,6 +119,7 @@ void ClientMain(RdmaEndpoint &ep, volatile unsigned char *const buf, IdType id) 
         get_rounds++;
     };
 
+    auto bench_begin = std::chrono::steady_clock::now();
     while (tot_acked < tot_put_rounds) {
         auto op = NextOp();
         if (op == KvsOp::PUT) {
@@ -198,6 +202,10 @@ void ClientMain(RdmaEndpoint &ep, volatile unsigned char *const buf, IdType id) 
             increment_rslot();
         }
     }
+
+    auto bench_end = std::chrono::steady_clock::now();
+    get_iops.set_value(get_rounds / std::chrono::duration<double>(bench_end - bench_begin).count());
+    put_iops.set_value(tot_acked / std::chrono::duration<double>(bench_end - bench_begin).count());
 }
 
 int main(int argc, char **argv) {
@@ -226,8 +234,12 @@ int main(int argc, char **argv) {
         DLOG(INFO) << "Response QP " << i << " connected.";
     }
     std::vector<std::thread> threads;
+    std::vector<std::future<double>> get_iopses, put_iopses;
     for (int i = 0; i < local_threads; i++) {
-        std::thread t(ClientMain, std::ref(ep), buffer, i);
+        std::promise<double> g, p;
+        get_iopses.emplace_back(g.get_future());
+        put_iopses.emplace_back(p.get_future());
+        std::thread t(ClientMain, std::ref(ep), buffer, i, std::move(g), std::move(p));
         threads.emplace_back(std::move(t));
     }
 
@@ -235,5 +247,13 @@ int main(int argc, char **argv) {
         t.join();
     }
 
+    double tot_get_iops = 0, tot_put_iops = 0;
+    for (auto &g : get_iopses) {
+        tot_get_iops += g.get();
+    }
+    for (auto &p: put_iopses) {
+        tot_put_iops += p.get();
+    }
+    LOG(INFO) << "Total GET IOPS: " << tot_get_iops << ", PUT IOPS: " << tot_put_iops;
     return 0;
 }
