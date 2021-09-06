@@ -22,7 +22,7 @@ static bool CheckPowerOfTwo(const char* flagname, gflags::uint64 value) {
     if ((value & (value - 1)) == 0) {
         return true;
     }
-    printf("%s is not a power of 2!", flagname);
+    printf("%s is not a power of 2!\n", flagname);
     return false;
 }
 

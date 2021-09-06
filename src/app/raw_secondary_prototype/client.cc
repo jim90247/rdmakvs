@@ -78,7 +78,8 @@ void ClientMain(RdmaEndpoint &ep, volatile unsigned char *const buf, IdType id) 
     const size_t r_kvs_offset = FLAGS_server_threads * FLAGS_total_client_threads *
                                 FLAGS_msg_slot_size * FLAGS_msg_slots * 2;
     const size_t read_offset =
-        FLAGS_server_threads * local_threads * FLAGS_msg_slot_size * FLAGS_msg_slots * 2;
+        FLAGS_server_threads * local_threads * FLAGS_msg_slot_size * FLAGS_msg_slots * 2 +
+        id * FLAGS_readbuf_slots * sizeof(KeyValuePair);
     volatile unsigned char *const readbuf = buf + read_offset;
 
     for (int s = 0; s < FLAGS_server_threads; s++) {
@@ -186,10 +187,12 @@ void ClientMain(RdmaEndpoint &ep, volatile unsigned char *const buf, IdType id) 
             // check value
             auto kvp = KeyValuePair::ParseFrom(readbuf + rslot_offset);
             if (kvp.lock == 0) {
-                // FIXME: this check fails when multiple client threads READ at the same time
-                CHECK_EQ((kvp.key & (FLAGS_kvs_entries - 1)), (k & (FLAGS_kvs_entries - 1)))
-                    << "key=" << k << ", received value='" << kvp.value
-                    << "', get rounds=" << get_rounds;
+                // FIXME: this check fails when multiple client threads on same node perform READ at
+                // the same time
+                if ((kvp.key & (FLAGS_kvs_entries - 1)) != (k & (FLAGS_kvs_entries - 1))) {
+                    RAW_LOG(FATAL, "key=%ld, received value='%s', get rounds=%ld", k, kvp.value,
+                            get_rounds);
+                }
             }
 
             increment_rslot();
@@ -203,9 +206,10 @@ int main(int argc, char **argv) {
 
     ReadClientInfo();
 
-    size_t buf_size = FLAGS_server_threads * local_threads * FLAGS_msg_slot_size * FLAGS_msg_slots *
-                          2 +                                      // request/response
-                      FLAGS_readbuf_slots * sizeof(KeyValuePair);  // buffer for GET via RDMA read
+    size_t buf_size =
+        FLAGS_server_threads * local_threads * FLAGS_msg_slot_size * FLAGS_msg_slots *
+            2 +                                                      // request/response
+        local_threads * FLAGS_readbuf_slots * sizeof(KeyValuePair);  // buffer for GET via RDMA read
 
     // volatile unsigned char *buffer = new volatile unsigned char[buf_size]();
     volatile unsigned char *buffer =
