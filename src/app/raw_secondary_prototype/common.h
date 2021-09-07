@@ -64,8 +64,13 @@ inline size_t ComputeKvBufOffset(KeyType key) {
     return sizeof(KeyValuePair) * (key & (FLAGS_kvs_entries - 1));
 }
 
+#ifdef NDEBUG
+// use fixed value string for better performance
+inline std::string GetValueStr(int s, int c, int r) { return "fixed"; }
+#else
 inline std::string GetValueStr(int s, int c, int r) {
     std::stringstream ss;
     ss << "s=" << s << ", c=" << c << ", r=" << r;
     return ss.str();
 }
+#endif

@@ -35,8 +35,8 @@ KeyValuePair KeyValuePair::ParseFrom(volatile unsigned char* buf) {
 }
 
 KeyValuePair KeyValuePair::Create(KeyType key, ValueSizeType size, const char* value) {
-    CHECK_NOTNULL(value);
-    CHECK_LE(size, kMaxValueSize);
+    DCHECK_NOTNULL(value);
+    DCHECK_LE(size, kMaxValueSize);
     KeyValuePair kvp{.key = key, .size = size, .lock = 0};
     std::copy(value, value + size, kvp.value);
     return kvp;

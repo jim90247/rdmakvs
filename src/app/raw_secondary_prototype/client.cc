@@ -148,7 +148,7 @@ void ClientMain(RdmaEndpoint &ep, volatile unsigned char *const buf, IdType id,
                 ++tot_sent;
 
                 if (sent[s] % (FLAGS_put_rounds / 10) == 0) {
-                    RAW_LOG(INFO, "c_id: %d, (s_id: %d) Sent: %d", id, s, sent[s]);
+                    RAW_DLOG(INFO, "c_id: %d, (s_id: %d) Sent: %d", id, s, sent[s]);
                 }
             }
 
@@ -162,9 +162,12 @@ void ClientMain(RdmaEndpoint &ep, volatile unsigned char *const buf, IdType id,
 
                 // get message
                 auto kvp = ParseKvpFromMsg(inbuf[s] + slot_offset);
+#ifndef NDEBUG
+                // skip checking when measuring performance
                 std::string expected_value = GetValueStr(s, gid, acked[s]);
                 DCHECK_EQ(acked[s], kvp.key);
                 DCHECK_STREQ(expected_value.c_str(), kvp.value);
+#endif
 
                 // reclaim
                 used_slots[s].pop();

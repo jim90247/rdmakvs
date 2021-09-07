@@ -77,6 +77,7 @@ void ServerMain(RdmaEndpoint &ep, volatile unsigned char *const buf, const IdTyp
             // get message
             auto kvp = ParseKvpFromMsg(inbuf[c] + slot_offset);
 #ifndef NDEBUG
+            // skip checking when measuring performance
             std::string expected_value = GetValueStr(id, c, processed[c]);
             DCHECK_EQ(processed[c], kvp.key);
             DCHECK_STREQ(expected_value.c_str(), kvp.value);
