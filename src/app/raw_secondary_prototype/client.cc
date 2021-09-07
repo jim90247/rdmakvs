@@ -161,12 +161,12 @@ void ClientMain(RdmaEndpoint &ep, volatile unsigned char *const buf, IdType id,
                 }
 
                 // get message
-                auto kvp = ParseKvpFromMsg(inbuf[s] + slot_offset);
+                auto kvp_ptr = ParseKvpFromMsgRaw(inbuf[s] + slot_offset);
 #ifndef NDEBUG
                 // skip checking when measuring performance
                 std::string expected_value = GetValueStr(s, gid, acked[s]);
-                DCHECK_EQ(acked[s], kvp.key);
-                DCHECK_STREQ(expected_value.c_str(), kvp.value);
+                DCHECK_EQ(acked[s], kvp_ptr->key);
+                DCHECK_STREQ(expected_value.c_str(), const_cast<char *>(kvp_ptr->value));
 #endif
 
                 // reclaim
@@ -177,7 +177,7 @@ void ClientMain(RdmaEndpoint &ep, volatile unsigned char *const buf, IdType id,
 
                 if (acked[s] % (FLAGS_put_rounds / 10) == 0) {
                     RAW_DLOG(INFO, "c_id: %d, (s_id: %d) Acknowledged: %d (last: '%s')", id, s,
-                             acked[s], kvp.value);
+                             acked[s], kvp_ptr->value);
                 }
             }
             increment_sid();

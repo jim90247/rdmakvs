@@ -35,13 +35,20 @@ struct KeyValuePair {
 
     static KeyValuePair Create(KeyType key, ValueSizeType size, const char* value);
     static KeyValuePair ParseFrom(volatile unsigned char* buf);
+    static volatile KeyValuePair* ParseFromRaw(volatile unsigned char* const buf);
     void SerializeTo(volatile unsigned char* const buf) const;
+    void SerializeTo(volatile unsigned char* const buf) volatile;
     void AtomicSerializeTo(volatile unsigned char* const buf) const;
+    void AtomicSerializeTo(volatile unsigned char* const buf) volatile;
 };
 
 KeyValuePair ParseKvpFromMsg(volatile unsigned char* const buf);
 
+volatile KeyValuePair* ParseKvpFromMsgRaw(volatile unsigned char* const buf);
+
 void SerializeKvpAsMsg(volatile unsigned char* const buf, const KeyValuePair& kvp);
+
+void SerializeKvpAsMsg(volatile unsigned char* const buf, volatile KeyValuePair* const kvp_ptr);
 
 inline size_t ComputeSlotOffset(int sid) { return sid * FLAGS_msg_slot_size; }
 

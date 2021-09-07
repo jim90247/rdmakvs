@@ -75,24 +75,24 @@ void ServerMain(RdmaEndpoint &ep, volatile unsigned char *const buf, const IdTyp
             }
 
             // get message
-            auto kvp = ParseKvpFromMsg(inbuf[c] + slot_offset);
+            auto kvp_ptr = ParseKvpFromMsgRaw(inbuf[c] + slot_offset);
 #ifndef NDEBUG
             // skip checking when measuring performance
             std::string expected_value = GetValueStr(id, c, processed[c]);
-            DCHECK_EQ(processed[c], kvp.key);
-            DCHECK_STREQ(expected_value.c_str(), kvp.value);
+            DCHECK_EQ(processed[c], kvp_ptr->key);
+            DCHECK_STREQ(expected_value.c_str(), const_cast<char *>(kvp_ptr->value));
 #endif
 
             // write to key value storage
-            size_t key_offset = ComputeKvBufOffset(kvp.key);
+            size_t key_offset = ComputeKvBufOffset(kvp_ptr->key);
             // TODO: verify the necessity of atomic write
-            kvp.AtomicSerializeTo(kvsbuf + key_offset);
+            kvp_ptr->AtomicSerializeTo(kvsbuf + key_offset);
 
             // clear this slot's incoming buffer for reuse in future
             std::fill(inbuf[c] + slot_offset, inbuf[c] + slot_offset + FLAGS_msg_slot_size, 0);
 
             // send response
-            SerializeKvpAsMsg(outbuf[c] + slot_offset, kvp);
+            SerializeKvpAsMsg(outbuf[c] + slot_offset, kvp_ptr);
             auto wr = ep.Write(false, GetRespConnIdx(id, c), out_offset[c] + slot_offset,
                                r_in_offset[c] + slot_offset, FLAGS_msg_slot_size);
             // Receiving next request using this same slot is an indicator that this WRITE has
@@ -114,7 +114,7 @@ void InitializeKvs(volatile unsigned char *kvsbuf) {
     for (KeyType k = 0; k < FLAGS_kvs_entries; k++) {
         size_t key_offset = ComputeKvBufOffset(k);
         auto v = std::to_string(k);
-        auto kvp = KeyValuePair::Create(k, v.length(), v.c_str());
+        const KeyValuePair kvp = KeyValuePair::Create(k, v.length(), v.c_str());
         kvp.SerializeTo(kvsbuf + key_offset);
     }
 }
