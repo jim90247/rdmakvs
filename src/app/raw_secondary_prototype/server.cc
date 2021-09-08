@@ -43,19 +43,20 @@ inline IdType GetRespConnIdx(IdType s_id, IdType c_id) {
 
 void ServerMain(RdmaEndpoint &ep, volatile unsigned char *const buf, const IdType id) {
     // These fields should not be modified
-    size_t *out_offset = new size_t[FLAGS_total_client_threads],
-           *r_in_offset = new size_t[FLAGS_total_client_threads];
-    volatile unsigned char **outbuf = new volatile unsigned char *[FLAGS_total_client_threads],
-                           **inbuf = new volatile unsigned char *[FLAGS_total_client_threads];
+    size_t *res_offset = new size_t[FLAGS_total_client_threads],
+           *r_res_offset = new size_t[FLAGS_total_client_threads];
+    volatile unsigned char **resbuf = new volatile unsigned char *[FLAGS_total_client_threads],
+                           **reqbuf = new volatile unsigned char *[FLAGS_total_client_threads];
     const size_t kvs_offset = FLAGS_server_threads * FLAGS_total_client_threads *
-                              FLAGS_msg_slot_size * FLAGS_msg_slots * 2;
+                              (FLAGS_req_msg_slot_size + FLAGS_res_msg_slot_size) * FLAGS_msg_slots;
     volatile unsigned char *const kvsbuf = buf + kvs_offset;
 
     for (int c = 0; c < FLAGS_total_client_threads; c++) {
-        out_offset[c] = ComputeServerMsgBufOffset(id, c, false);
-        r_in_offset[c] = ComputeClientMsgBufOffset(id, cid2lcid[c], cid2threads[c], true);
-        outbuf[c] = buf + out_offset[c];
-        inbuf[c] = buf + ComputeServerMsgBufOffset(id, c, true);
+        res_offset[c] = ComputeServerMsgBufOffset(id, c, BufferType::RES);
+        r_res_offset[c] =
+            ComputeClientMsgBufOffset(id, cid2lcid[c], cid2threads[c], BufferType::RES);
+        resbuf[c] = buf + res_offset[c];
+        reqbuf[c] = buf + ComputeServerMsgBufOffset(id, c, BufferType::REQ);
     }
 
     std::vector<int> slot(FLAGS_total_client_threads, 0);
@@ -69,13 +70,13 @@ void ServerMain(RdmaEndpoint &ep, volatile unsigned char *const buf, const IdTyp
                 continue;
             }
             // check message present
-            size_t slot_offset = ComputeSlotOffset(slot[c]);
-            if (!CheckMsgPresent(inbuf[c] + slot_offset)) {
+            size_t req_slot_offset = ComputeReqSlotOffset(slot[c]);
+            if (!CheckReqMsgPresent(reqbuf[c] + req_slot_offset)) {
                 continue;
             }
 
             // get message
-            auto kvp_ptr = ParseKvpFromMsgRaw(inbuf[c] + slot_offset);
+            auto kvp_ptr = ParseKvpFromMsgRaw(reqbuf[c] + req_slot_offset);
 #ifndef NDEBUG
             // skip checking when measuring performance
             std::string expected_value = GetValueStr(id, c, processed[c]);
@@ -89,14 +90,16 @@ void ServerMain(RdmaEndpoint &ep, volatile unsigned char *const buf, const IdTyp
             kvp_ptr->AtomicSerializeTo(kvsbuf + key_offset);
 
             // serialize response before clearing
-            SerializeKvpAsMsg(outbuf[c] + slot_offset, kvp_ptr);
+            size_t res_slot_offset = ComputeResSlotOffset(slot[c]);
+            SerializeKvpAsMsg(resbuf[c] + res_slot_offset, kvp_ptr, BufferType::RES);
 
             // clear this slot's incoming buffer for reuse in future
-            std::fill(inbuf[c] + slot_offset, inbuf[c] + slot_offset + FLAGS_msg_slot_size, 0);
+            std::fill(reqbuf[c] + req_slot_offset,
+                      reqbuf[c] + req_slot_offset + FLAGS_req_msg_slot_size, 0);
 
             // send response
-            auto wr = ep.Write(false, GetRespConnIdx(id, c), out_offset[c] + slot_offset,
-                               r_in_offset[c] + slot_offset, FLAGS_msg_slot_size);
+            auto wr = ep.Write(false, GetRespConnIdx(id, c), res_offset[c] + res_slot_offset,
+                               r_res_offset[c] + res_slot_offset, FLAGS_res_msg_slot_size);
             // Receiving next request using this same slot is an indicator that this WRITE has
             // completed
             // ep.WaitForCompletion(GetRespConnIdx(id, c), true, wr);
@@ -127,13 +130,15 @@ int main(int argc, char **argv) {
 
     ReadClientInfo();
 
-    size_t buf_size = FLAGS_server_threads * FLAGS_total_client_threads * FLAGS_msg_slot_size *
-                          FLAGS_msg_slots * 2                      // request/response
+    size_t buf_size = FLAGS_server_threads * FLAGS_total_client_threads *
+                          (FLAGS_req_msg_slot_size + FLAGS_res_msg_slot_size) *
+                          FLAGS_msg_slots                          // request/response
                       + sizeof(KeyValuePair) * FLAGS_kvs_entries;  // actual key value store
 
     volatile unsigned char *buffer = new volatile unsigned char[buf_size]();
-    InitializeKvs(buffer + FLAGS_server_threads * FLAGS_total_client_threads * FLAGS_msg_slot_size *
-                               FLAGS_msg_slots * 2);
+    InitializeKvs(buffer + FLAGS_server_threads * FLAGS_total_client_threads *
+                               (FLAGS_req_msg_slot_size + FLAGS_res_msg_slot_size) *
+                               FLAGS_msg_slots);
 
     RdmaEndpoint ep(nullptr, 0, buffer, buf_size, 128, 128, IBV_QPT_RC);
     ep.BindToZmqEndpoint(FLAGS_kvs_server.c_str());

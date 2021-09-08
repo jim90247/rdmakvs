@@ -8,7 +8,8 @@
 #include "network/rdma.h"
 
 DECLARE_string(kvs_server);
-DECLARE_uint64(msg_slot_size);
+DECLARE_uint64(req_msg_slot_size);
+DECLARE_uint64(res_msg_slot_size);
 DECLARE_uint64(msg_slots);
 DECLARE_int32(put_rounds);
 DECLARE_int32(server_threads);
@@ -42,29 +43,45 @@ struct KeyValuePair {
     void AtomicSerializeTo(volatile unsigned char* const buf) volatile;
 };
 
+enum class BufferType { REQ, RES };
+
 KeyValuePair ParseKvpFromMsg(volatile unsigned char* const buf);
 
 volatile KeyValuePair* ParseKvpFromMsgRaw(volatile unsigned char* const buf);
 
-void SerializeKvpAsMsg(volatile unsigned char* const buf, const KeyValuePair& kvp);
+void SerializeKvpAsMsg(volatile unsigned char* const buf, const KeyValuePair& kvp, BufferType bt);
 
-void SerializeKvpAsMsg(volatile unsigned char* const buf, volatile KeyValuePair* const kvp_ptr);
+void SerializeKvpAsMsg(volatile unsigned char* const buf, volatile KeyValuePair* const kvp_ptr,
+                       BufferType bt);
 
-inline size_t ComputeSlotOffset(int sid) { return sid * FLAGS_msg_slot_size; }
+inline size_t ComputeReqSlotOffset(int sid) { return sid * FLAGS_req_msg_slot_size; }
 
-inline bool CheckMsgPresent(volatile unsigned char* const buf) {
-    return buf[FLAGS_msg_slot_size - 1] != 0;
+inline size_t ComputeResSlotOffset(int sid) { return sid * FLAGS_res_msg_slot_size; }
+
+inline bool CheckReqMsgPresent(volatile unsigned char* const buf) {
+    return buf[FLAGS_req_msg_slot_size - 1] != 0;
 }
 
-inline size_t ComputeServerMsgBufOffset(IdType s_id, IdType c_id, bool in) {
-    int x = in ? 1 : 0;
-    return ((FLAGS_total_client_threads * s_id + c_id) * 2 + x) * FLAGS_msg_slots *
-           FLAGS_msg_slot_size;
+inline bool CheckResMsgPresent(volatile unsigned char* const buf) {
+    return buf[FLAGS_res_msg_slot_size - 1] != 0;
 }
 
-inline size_t ComputeClientMsgBufOffset(IdType s_id, IdType c_id, int client_threads, bool in) {
-    int x = in ? 1 : 0;
-    return ((client_threads * s_id + c_id) * 2 + x) * FLAGS_msg_slots * FLAGS_msg_slot_size;
+inline size_t ComputeServerMsgBufOffset(IdType s_id, IdType c_id, BufferType bt) {
+    int x = (bt == BufferType::REQ) ? 0 : 1;
+    // request buffer goes before response buffer
+    return ((FLAGS_total_client_threads * s_id + c_id) *
+                (FLAGS_req_msg_slot_size + FLAGS_res_msg_slot_size) +
+            x * FLAGS_req_msg_slot_size) *
+           FLAGS_msg_slots;
+}
+
+inline size_t ComputeClientMsgBufOffset(IdType s_id, IdType c_id, int client_threads,
+                                        BufferType bt) {
+    int x = (bt == BufferType::REQ) ? 0 : 1;
+    // request buffer goes before response buffer
+    return ((client_threads * s_id + c_id) * (FLAGS_req_msg_slot_size + FLAGS_res_msg_slot_size) +
+            x * FLAGS_req_msg_slot_size) *
+           FLAGS_msg_slots;
 }
 
 inline size_t ComputeKvBufOffset(KeyType key) {

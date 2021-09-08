@@ -1,5 +1,7 @@
 #include "app/raw_secondary_prototype/common.h"
 
+#include <glog/raw_logging.h>
+
 #include <algorithm>
 #include <cstdio>
 
@@ -7,7 +9,8 @@
 
 // TODO: parse server zmq endpoint from config file
 DEFINE_string(kvs_server, "tcp://192.168.223.1:7889", "Key value store server Zmq endpoint");
-DEFINE_uint64(msg_slot_size, 64, "Size of each message slot");
+DEFINE_uint64(req_msg_slot_size, 64, "Size of each request message slot");
+DEFINE_uint64(res_msg_slot_size, 64, "Size of each response message slot");
 DEFINE_uint64(msg_slots, 4096, "Message slots for in/out message each");
 DEFINE_int32(put_rounds, 100, "PUT Rounds");
 // TODO: parse server threads from config file
@@ -88,16 +91,39 @@ volatile KeyValuePair* ParseKvpFromMsgRaw(volatile unsigned char* const buf) {
     return KeyValuePair::ParseFromRaw(buf + sizeof(MsgSizeType));
 }
 
-void SerializeKvpAsMsg(volatile unsigned char* const buf, const KeyValuePair& kvp) {
+void SerializeKvpAsMsg(volatile unsigned char* const buf, const KeyValuePair& kvp, BufferType bt) {
+    if (bt == BufferType::REQ) {
+        RAW_DCHECK(sizeof(MsgSizeType) + sizeof(KeyValuePair) + 1 <= FLAGS_req_msg_slot_size,
+                   "Key value pair is too large to fit in request buffer.");
+    } else {
+        RAW_DCHECK(sizeof(MsgSizeType) + sizeof(KeyValuePair) + 1 <= FLAGS_res_msg_slot_size,
+                   "Key value pair is too large to fit in response buffer.");
+    }
     *reinterpret_cast<volatile MsgSizeType*>(buf) = static_cast<MsgSizeType>(sizeof(KeyValuePair));
     kvp.SerializeTo(buf + sizeof(MsgSizeType));
     // trailing byte
-    buf[FLAGS_msg_slot_size - 1] = 0xff;
+    if (bt == BufferType::REQ) {
+        buf[FLAGS_req_msg_slot_size - 1] = 0xff;
+    } else {
+        buf[FLAGS_res_msg_slot_size - 1] = 0xff;
+    }
 }
 
-void SerializeKvpAsMsg(volatile unsigned char* const buf, volatile KeyValuePair* const kvp_ptr) {
+void SerializeKvpAsMsg(volatile unsigned char* const buf, volatile KeyValuePair* const kvp_ptr,
+                       BufferType bt) {
+    if (bt == BufferType::REQ) {
+        RAW_DCHECK(sizeof(MsgSizeType) + sizeof(KeyValuePair) + 1 <= FLAGS_req_msg_slot_size,
+                   "Key value pair is too large to fit in request buffer.");
+    } else {
+        RAW_DCHECK(sizeof(MsgSizeType) + sizeof(KeyValuePair) + 1 <= FLAGS_res_msg_slot_size,
+                   "Key value pair is too large to fit in response buffer.");
+    }
     *reinterpret_cast<volatile MsgSizeType*>(buf) = static_cast<MsgSizeType>(sizeof(KeyValuePair));
     kvp_ptr->SerializeTo(buf + sizeof(MsgSizeType));
     // trailing byte
-    buf[FLAGS_msg_slot_size - 1] = 0xff;
+    if (bt == BufferType::REQ) {
+        buf[FLAGS_req_msg_slot_size - 1] = 0xff;
+    } else {
+        buf[FLAGS_res_msg_slot_size - 1] = 0xff;
+    }
 }

@@ -73,23 +73,25 @@ void ClientMain(RdmaEndpoint &ep, volatile unsigned char *const buf, IdType id,
                 std::promise<double> &&get_iops, std::promise<double> &&put_iops) {
     // These fields should not be modified
     const IdType gid = id2gid[id];
-    size_t *out_offset = new size_t[FLAGS_server_threads],
-           *r_in_offset = new size_t[FLAGS_server_threads];
-    volatile unsigned char **outbuf = new volatile unsigned char *[FLAGS_server_threads],
-                           **inbuf = new volatile unsigned char *[FLAGS_server_threads];
+    size_t *req_offset = new size_t[FLAGS_server_threads],
+           *r_req_offset = new size_t[FLAGS_server_threads];
+    volatile unsigned char **reqbuf = new volatile unsigned char *[FLAGS_server_threads],
+                           **resbuf = new volatile unsigned char *[FLAGS_server_threads];
 
     const size_t r_kvs_offset = FLAGS_server_threads * FLAGS_total_client_threads *
-                                FLAGS_msg_slot_size * FLAGS_msg_slots * 2;
-    const size_t read_offset =
-        FLAGS_server_threads * local_threads * FLAGS_msg_slot_size * FLAGS_msg_slots * 2 +
-        id * FLAGS_readbuf_slots * sizeof(KeyValuePair);
+                                (FLAGS_req_msg_slot_size + FLAGS_res_msg_slot_size) *
+                                FLAGS_msg_slots;
+    const size_t read_offset = FLAGS_server_threads * local_threads *
+                                   (FLAGS_req_msg_slot_size + FLAGS_res_msg_slot_size) *
+                                   FLAGS_msg_slots +
+                               id * FLAGS_readbuf_slots * sizeof(KeyValuePair);
     volatile unsigned char *const readbuf = buf + read_offset;
 
     for (int s = 0; s < FLAGS_server_threads; s++) {
-        out_offset[s] = ComputeClientMsgBufOffset(s, id, local_threads, false);
-        r_in_offset[s] = ComputeServerMsgBufOffset(s, gid, true);
-        outbuf[s] = buf + out_offset[s];
-        inbuf[s] = buf + ComputeClientMsgBufOffset(s, id, local_threads, true);
+        req_offset[s] = ComputeClientMsgBufOffset(s, id, local_threads, BufferType::REQ);
+        r_req_offset[s] = ComputeServerMsgBufOffset(s, gid, BufferType::REQ);
+        reqbuf[s] = buf + req_offset[s];
+        resbuf[s] = buf + ComputeClientMsgBufOffset(s, id, local_threads, BufferType::RES);
     }
 
     std::vector<std::queue<int>> free_slots(FLAGS_server_threads), used_slots(FLAGS_server_threads);
@@ -128,15 +130,17 @@ void ClientMain(RdmaEndpoint &ep, volatile unsigned char *const buf, IdType id,
                 std::string value = GetValueStr(s, gid, sent[s]);
                 auto kvp = KeyValuePair::Create(sent[s], value.length() + 1, value.c_str());
                 int slot = free_slots[s].front();
-                size_t slot_offset = ComputeSlotOffset(slot);
-                SerializeKvpAsMsg(outbuf[s] + slot_offset, kvp);
+                size_t req_slot_offset = ComputeReqSlotOffset(slot);
+                size_t res_slot_offset = ComputeResSlotOffset(slot);
+                SerializeKvpAsMsg(reqbuf[s] + req_slot_offset, kvp, BufferType::REQ);
 
                 // clear incoming buffer
-                std::fill(inbuf[s] + slot_offset, inbuf[s] + slot_offset + FLAGS_msg_slot_size, 0);
+                std::fill(resbuf[s] + res_slot_offset,
+                          resbuf[s] + res_slot_offset + FLAGS_res_msg_slot_size, 0);
 
                 // write
-                auto wr = ep.Write(false, id, out_offset[s] + slot_offset,
-                                   r_in_offset[s] + slot_offset, FLAGS_msg_slot_size);
+                auto wr = ep.Write(false, id, req_offset[s] + req_slot_offset,
+                                   r_req_offset[s] + req_slot_offset, FLAGS_req_msg_slot_size);
                 // The response from server can be used as an indicator for the request completion.
                 // Therefore this waiting is optional.
                 // client.WaitForCompletion(id, true, wr);
@@ -155,13 +159,13 @@ void ClientMain(RdmaEndpoint &ep, volatile unsigned char *const buf, IdType id,
             while (!used_slots[s].empty() && acked[s] < FLAGS_put_rounds) {
                 // check message present
                 int slot = used_slots[s].front();
-                size_t slot_offset = ComputeSlotOffset(slot);
-                if (!CheckMsgPresent(inbuf[s] + slot_offset)) {
+                size_t slot_offset = ComputeResSlotOffset(slot);
+                if (!CheckResMsgPresent(resbuf[s] + slot_offset)) {
                     break;
                 }
 
                 // get message
-                auto kvp_ptr = ParseKvpFromMsgRaw(inbuf[s] + slot_offset);
+                auto kvp_ptr = ParseKvpFromMsgRaw(resbuf[s] + slot_offset);
 #ifndef NDEBUG
                 // skip checking when measuring performance
                 std::string expected_value = GetValueStr(s, gid, acked[s]);
@@ -218,8 +222,8 @@ int main(int argc, char **argv) {
     ReadClientInfo();
 
     size_t buf_size =
-        FLAGS_server_threads * local_threads * FLAGS_msg_slot_size * FLAGS_msg_slots *
-            2 +                                                      // request/response
+        FLAGS_server_threads * local_threads * (FLAGS_req_msg_slot_size + FLAGS_res_msg_slot_size) *
+            FLAGS_msg_slots +                                        // request/response
         local_threads * FLAGS_readbuf_slots * sizeof(KeyValuePair);  // buffer for GET via RDMA read
 
     // volatile unsigned char *buffer = new volatile unsigned char[buf_size]();
