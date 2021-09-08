@@ -200,13 +200,13 @@ void ClientMain(RdmaEndpoint &ep, volatile unsigned char *const buf, IdType id,
             ep.WaitForCompletion(id, true, wr);
 
             // check value
-            auto kvp = KeyValuePair::ParseFrom(readbuf + rslot_offset);
-            if (kvp.lock == 0) {
+            auto kvp_ptr = KeyValuePair::ParseFromRaw(readbuf + rslot_offset);
+            if (kvp_ptr->lock == 0) {
                 // FIXME: this check fails when multiple client threads on same node perform READ at
                 // the same time
-                if ((kvp.key & (FLAGS_kvs_entries - 1)) != (k & (FLAGS_kvs_entries - 1))) {
-                    RAW_LOG(FATAL, "key=%ld, received value='%s', get rounds=%ld", k, kvp.value,
-                            get_rounds);
+                if ((kvp_ptr->key & (FLAGS_kvs_entries - 1)) != (k & (FLAGS_kvs_entries - 1))) {
+                    RAW_DLOG(FATAL, "key=%ld, received value='%s', get rounds=%ld", k,
+                             kvp_ptr->value, get_rounds);
                 }
             }
 
