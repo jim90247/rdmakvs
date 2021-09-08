@@ -88,11 +88,13 @@ void ServerMain(RdmaEndpoint &ep, volatile unsigned char *const buf, const IdTyp
             // TODO: verify the necessity of atomic write
             kvp_ptr->AtomicSerializeTo(kvsbuf + key_offset);
 
+            // serialize response before clearing
+            SerializeKvpAsMsg(outbuf[c] + slot_offset, kvp_ptr);
+
             // clear this slot's incoming buffer for reuse in future
             std::fill(inbuf[c] + slot_offset, inbuf[c] + slot_offset + FLAGS_msg_slot_size, 0);
 
             // send response
-            SerializeKvpAsMsg(outbuf[c] + slot_offset, kvp_ptr);
             auto wr = ep.Write(false, GetRespConnIdx(id, c), out_offset[c] + slot_offset,
                                r_in_offset[c] + slot_offset, FLAGS_msg_slot_size);
             // Receiving next request using this same slot is an indicator that this WRITE has
