@@ -1,5 +1,6 @@
 #include <gflags/gflags.h>
 #include <gflags/gflags_declare.h>
+#include <glog/raw_logging.h>
 
 #include <cstdint>
 #include <sstream>
@@ -26,7 +27,13 @@ using ValueSizeType = int;
 using MsgSizeType = int;
 using IdType = int;
 
-constexpr ValueSizeType kMaxValueSize = 32;
+constexpr ValueSizeType kMaxValueSize =
+#ifdef NDEBUG
+    8
+#else
+    32
+#endif
+    ;
 
 struct KeyValuePair {
     KeyType key;
@@ -49,10 +56,36 @@ KeyValuePair ParseKvpFromMsg(volatile unsigned char* const buf);
 
 volatile KeyValuePair* ParseKvpFromMsgRaw(volatile unsigned char* const buf);
 
+template <typename T>
+T ParseScalarFromMsg(volatile unsigned char* const buf) {
+    RAW_DCHECK(*reinterpret_cast<volatile MsgSizeType*>(buf) == sizeof(T),
+               "Message size does not match scalar type size.");
+    return *reinterpret_cast<volatile T*>(buf + sizeof(MsgSizeType));
+}
+
 void SerializeKvpAsMsg(volatile unsigned char* const buf, const KeyValuePair& kvp, BufferType bt);
 
 void SerializeKvpAsMsg(volatile unsigned char* const buf, volatile KeyValuePair* const kvp_ptr,
                        BufferType bt);
+
+template <typename T>
+void SerializeScalarAsMsg(volatile unsigned char* const buf, T scalar, BufferType bt) {
+    if (bt == BufferType::REQ) {
+        RAW_DCHECK(sizeof(MsgSizeType) + sizeof(T) + 1 <= FLAGS_req_msg_slot_size,
+                   "Key value pair is too large to fit in request buffer.");
+    } else {
+        RAW_DCHECK(sizeof(MsgSizeType) + sizeof(T) + 1 <= FLAGS_res_msg_slot_size,
+                   "Key value pair is too large to fit in response buffer.");
+    }
+    *reinterpret_cast<volatile MsgSizeType*>(buf) = static_cast<MsgSizeType>(sizeof(T));
+    *reinterpret_cast<volatile T*>(buf + sizeof(MsgSizeType)) = scalar;
+    // trailing byte
+    if (bt == BufferType::REQ) {
+        buf[FLAGS_req_msg_slot_size - 1] = 0xff;
+    } else {
+        buf[FLAGS_res_msg_slot_size - 1] = 0xff;
+    }
+}
 
 inline size_t ComputeReqSlotOffset(int sid) { return sid * FLAGS_req_msg_slot_size; }
 
@@ -88,13 +121,13 @@ inline size_t ComputeKvBufOffset(KeyType key) {
     return sizeof(KeyValuePair) * (key & (FLAGS_kvs_entries - 1));
 }
 
-#ifdef NDEBUG
-// use fixed value string for better performance
-inline std::string GetValueStr(int s, int c, int r) { return "fixed"; }
-#else
 inline std::string GetValueStr(int s, int c, int r) {
+#ifdef NDEBUG
+    // use fixed value string for better performance
+    return "fixed";
+#else
     std::stringstream ss;
     ss << "s=" << s << ", c=" << c << ", r=" << r;
     return ss.str();
-}
 #endif
+}

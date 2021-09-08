@@ -91,7 +91,12 @@ void ServerMain(RdmaEndpoint &ep, volatile unsigned char *const buf, const IdTyp
 
             // serialize response before clearing
             size_t res_slot_offset = ComputeResSlotOffset(slot[c]);
+#ifdef NDEBUG
+            // return status code
+            SerializeScalarAsMsg(resbuf[c] + res_slot_offset, 0, BufferType::RES);
+#else
             SerializeKvpAsMsg(resbuf[c] + res_slot_offset, kvp_ptr, BufferType::RES);
+#endif
 
             // clear this slot's incoming buffer for reuse in future
             std::fill(reqbuf[c] + req_slot_offset,

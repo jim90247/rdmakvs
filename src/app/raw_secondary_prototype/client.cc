@@ -165,9 +165,11 @@ void ClientMain(RdmaEndpoint &ep, volatile unsigned char *const buf, IdType id,
                 }
 
                 // get message
+#ifdef NDEBUG
+                int rc = ParseScalarFromMsg<int>(resbuf[s] + slot_offset);
+                RAW_CHECK(rc == 0, "Got a non-zero return code.");
+#else
                 auto kvp_ptr = ParseKvpFromMsgRaw(resbuf[s] + slot_offset);
-#ifndef NDEBUG
-                // skip checking when measuring performance
                 std::string expected_value = GetValueStr(s, gid, acked[s]);
                 DCHECK_EQ(acked[s], kvp_ptr->key);
                 DCHECK_STREQ(expected_value.c_str(), const_cast<char *>(kvp_ptr->value));
@@ -180,8 +182,10 @@ void ClientMain(RdmaEndpoint &ep, volatile unsigned char *const buf, IdType id,
                 ++tot_acked;
 
                 if (acked[s] % (FLAGS_put_rounds / 10) == 0) {
+#ifndef NDEBUG
                     RAW_DLOG(INFO, "c_id: %d, (s_id: %d) Acknowledged: %d (last: '%s')", id, s,
                              acked[s], kvp_ptr->value);
+#endif
                 }
             }
             increment_sid();
