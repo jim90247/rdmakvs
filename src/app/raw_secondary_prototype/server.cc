@@ -99,6 +99,8 @@ void ServerMain(RdmaEndpoint &ep, volatile unsigned char *const buf, const IdTyp
 #endif
 
             // clear this slot's incoming buffer for reuse in future
+            // TODO: when requests are handled in batches, clear all request buffers for each batch
+            // at once
             std::fill(reqbuf[c] + req_slot_offset,
                       reqbuf[c] + req_slot_offset + FLAGS_req_msg_slot_size, 0);
 

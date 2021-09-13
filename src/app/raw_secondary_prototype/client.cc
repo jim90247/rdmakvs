@@ -135,6 +135,8 @@ void ClientMain(RdmaEndpoint &ep, volatile unsigned char *const buf, IdType id,
                 SerializeKvpAsMsg(reqbuf[s] + req_slot_offset, kvp, BufferType::REQ);
 
                 // clear incoming buffer
+                // TODO: when requests are sent in batches, clear all response buffers for each
+                // batch at once
                 std::fill(resbuf[s] + res_slot_offset,
                           resbuf[s] + res_slot_offset + FLAGS_res_msg_slot_size, 0);
 
