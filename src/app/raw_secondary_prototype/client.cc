@@ -20,7 +20,14 @@
 
 DEFINE_string(node_name, "", "Node name defined in node config");
 DEFINE_uint64(readbuf_slots, 128, "Buffer slots for GET using RDMA read");
+DEFINE_uint64(max_pending_gets, 32, "Number of GET requests between send and check");
 DEFINE_double(put_frac, 0.5, "Fraction of operations being PUT");
+
+struct PendingGetRequest {
+    KeyType key;
+    uint64_t wr_id;
+    int slot;
+};
 
 std::vector<IdType> id2gid;  // client local id to global client id
 int local_threads;           // number of threads in this client
@@ -101,6 +108,8 @@ void ClientMain(RdmaEndpoint &ep, volatile unsigned char *const buf, IdType id,
         }
     }
 
+    std::queue<PendingGetRequest> pending_gets;
+
     int tot_acked = 0, tot_sent = 0, tot_put_rounds = FLAGS_put_rounds * FLAGS_server_threads;
     std::vector<int> acked(FLAGS_server_threads), sent(FLAGS_server_threads);
 
@@ -119,6 +128,19 @@ void ClientMain(RdmaEndpoint &ep, volatile unsigned char *const buf, IdType id,
             rslot = 0;
         }
         get_rounds++;
+    };
+
+    // Check if the received key falls in the same KVS slot as the expected key.
+    auto check_key = [](volatile KeyValuePair *const kvp_ptr, KeyType expected) -> bool {
+        if (kvp_ptr->lock == 0) {
+            // FIXME: this check fails when multiple client threads on same node perform
+            // READ at the same time
+            if ((kvp_ptr->key & (FLAGS_kvs_entries - 1)) != (expected & (FLAGS_kvs_entries - 1))) {
+                RAW_DLOG(FATAL, "expected key=%ld, received value='%s'", expected, kvp_ptr->value);
+                return false;
+            }
+        }
+        return true;
     };
 
     auto bench_begin = std::chrono::steady_clock::now();
@@ -194,26 +216,35 @@ void ClientMain(RdmaEndpoint &ep, volatile unsigned char *const buf, IdType id,
         } else if (op == KvsOp::GET) {
             KeyType k = NextKey();
 
-            // send request
-            size_t key_offset = ComputeKvBufOffset(k);
-            size_t rslot_offset = ComputeReadSlotOffset(rslot);
-            auto wr = ep.Read(id, read_offset + rslot_offset, r_kvs_offset + key_offset,
-                              sizeof(KeyValuePair));
-            ep.WaitForCompletion(id, true, wr);
-
-            // check value
-            auto kvp_ptr = KeyValuePair::ParseFromRaw(readbuf + rslot_offset);
-            if (kvp_ptr->lock == 0) {
-                // FIXME: this check fails when multiple client threads on same node perform READ at
-                // the same time
-                if ((kvp_ptr->key & (FLAGS_kvs_entries - 1)) != (k & (FLAGS_kvs_entries - 1))) {
-                    RAW_DLOG(FATAL, "key=%ld, received value='%s', get rounds=%ld", k,
-                             kvp_ptr->value, get_rounds);
-                }
-            }
-
+            // issue READ request
+            auto wr = ep.Read(id, read_offset + ComputeReadSlotOffset(rslot),
+                              r_kvs_offset + ComputeKvBufOffset(k), sizeof(KeyValuePair));
+            // store request information for later check
+            pending_gets.push({.key = k, .wr_id = wr, .slot = rslot});
             increment_rslot();
+
+            if (pending_gets.size() >= FLAGS_max_pending_gets) {
+                auto req = pending_gets.front();
+                pending_gets.pop();
+                ep.WaitForCompletion(id, true, req.wr_id);
+
+                // check value
+                auto kvp_ptr =
+                    KeyValuePair::ParseFromRaw(readbuf + ComputeReadSlotOffset(req.slot));
+                check_key(kvp_ptr, req.key);
+            }
         }
+    }
+
+    // process remaining pending GET requests
+    while (!pending_gets.empty()) {
+        auto req = pending_gets.front();
+        pending_gets.pop();
+        ep.WaitForCompletion(id, true, req.wr_id);
+
+        // check value
+        auto kvp_ptr = KeyValuePair::ParseFromRaw(readbuf + ComputeReadSlotOffset(req.slot));
+        check_key(kvp_ptr, req.key);
     }
 
     auto bench_end = std::chrono::steady_clock::now();
@@ -224,6 +255,8 @@ void ClientMain(RdmaEndpoint &ep, volatile unsigned char *const buf, IdType id,
 int main(int argc, char **argv) {
     gflags::ParseCommandLineFlags(&argc, &argv, true);
     google::InitGoogleLogging(argv[0]);
+
+    CHECK_LE(FLAGS_max_pending_gets, FLAGS_readbuf_slots);
 
     ReadClientInfo();
 
