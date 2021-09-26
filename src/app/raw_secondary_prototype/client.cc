@@ -143,6 +143,9 @@ void ClientMain(RdmaEndpoint &ep, volatile unsigned char *const buf, IdType id,
         return true;
     };
 
+    // Use pre-initialized writes for slightly better performance
+    ep.InitializeFastWrite(id, 1);
+
     auto bench_begin = std::chrono::steady_clock::now();
     while (tot_acked < tot_put_rounds) {
         auto op = NextOp();
@@ -163,7 +166,7 @@ void ClientMain(RdmaEndpoint &ep, volatile unsigned char *const buf, IdType id,
                           resbuf[s] + res_slot_offset + FLAGS_res_msg_slot_size, 0);
 
                 // write
-                auto wr = ep.Write(false, id, req_offset[s] + req_slot_offset,
+                auto wr = ep.Write(true, id, req_offset[s] + req_slot_offset,
                                    r_req_offset[s] + req_slot_offset, FLAGS_req_msg_slot_size);
                 // The response from server can be used as an indicator for the request completion.
                 // Therefore this waiting is optional.

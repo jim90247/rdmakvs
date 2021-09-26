@@ -64,6 +64,11 @@ void ServerMain(RdmaEndpoint &ep, volatile unsigned char *const buf, const IdTyp
     int tot_processed = 0, tot_put_rounds = FLAGS_put_rounds * FLAGS_total_client_threads;
     std::vector<int> processed(FLAGS_total_client_threads, 0);
 
+    // Use pre-initialized writes for slightly better performance
+    for (int c = 0; c < FLAGS_total_client_threads; c++) {
+        ep.InitializeFastWrite(GetRespConnIdx(id, c), 1);
+    }
+
     while (tot_processed < tot_put_rounds) {
         for (int c = 0; c < FLAGS_total_client_threads; c++) {
             if (processed[c] >= FLAGS_put_rounds) {
@@ -105,7 +110,7 @@ void ServerMain(RdmaEndpoint &ep, volatile unsigned char *const buf, const IdTyp
                       reqbuf[c] + req_slot_offset + FLAGS_req_msg_slot_size, 0);
 
             // send response
-            auto wr = ep.Write(false, GetRespConnIdx(id, c), res_offset[c] + res_slot_offset,
+            auto wr = ep.Write(true, GetRespConnIdx(id, c), res_offset[c] + res_slot_offset,
                                r_res_offset[c] + res_slot_offset, FLAGS_res_msg_slot_size);
             // Receiving next request using this same slot is an indicator that this WRITE has
             // completed
