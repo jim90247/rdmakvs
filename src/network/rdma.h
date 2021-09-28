@@ -54,6 +54,27 @@ class RdmaEndpoint {
         SignalStrategy signal_strategy, unsigned int flags = 0);
     virtual uint64_t Read(size_t remote_id, uint64_t local_offset, uint64_t remote_offset,
                           uint32_t length, unsigned int flags = IBV_SEND_SIGNALED);
+
+    /**
+     * @brief Sets the batch size of RDMA READ for all connections and initializes templates.
+     *
+     * @param batch the batch size
+     */
+    virtual void setReadBatchSize(int batch);
+
+    /**
+     * @brief Performs RDMA read using pre-allocated buffer.
+     *
+     * @param remote_id the id of the connection to perform RDMA operation
+     * @param local_offset the offset of the local buffer to receive data
+     * @param remote_offset the offset of the remote buffer
+     * @param length the length of data to read
+     * @param flags the send flags, default is IBV_SEND_SIGNALED
+     * @return the work request id
+     */
+    virtual uint64_t Read_v2(size_t remote_id, uint64_t local_offset, uint64_t remote_offset,
+                             uint32_t length, unsigned int flags = IBV_SEND_SIGNALED);
+
     virtual uint64_t Send(size_t remote_id, uint64_t offset, uint32_t length,
                           unsigned int flags = IBV_SEND_SIGNALED);
     virtual uint64_t Recv(size_t remote_id, uint64_t offset, uint32_t length);
@@ -97,9 +118,18 @@ class RdmaEndpoint {
     // These templates are filled with metadata that can be reused across multiple requests.
     // Use these templates to reduce  request initialization overhead.
     struct RdmaRequestTemplate {
+        // for RDMA_WRITE
         struct ibv_send_wr send_wr_template[kMaxBatchSize];
         struct ibv_sge sge_template[kMaxBatchSize];
+
+        // for RDMA_READ
+        int read_batch_idx = 0;
+        struct ibv_send_wr read_wr_template[kMaxBatchSize];
+        struct ibv_sge read_sge_template[kMaxBatchSize];
     };
+
+    // must be set with setReadBatchSize()
+    int read_batch_size_ = -1;
 
     // Work request usage status of a RDMA connection
     // TODO: supports multiple threads per connection. Use case includes multiple threads accessing

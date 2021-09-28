@@ -1,4 +1,5 @@
 #include <glog/logging.h>
+#include <glog/raw_logging.h>
 #include <infiniband/verbs.h>
 #include <sys/param.h>
 #include <zmq.h>
@@ -439,12 +440,70 @@ uint64_t RdmaEndpoint::Read(size_t remote_id, uint64_t local_offset, uint64_t re
     };
     int rc = PostSendWithAutoReclaim(remote_id, &wr);
 
-    LOG_IF(ERROR, rc != 0) << "Error posting IBV_WR_RDMA_WRITE work request: " << strerror(rc);
+    LOG_IF(ERROR, rc != 0) << "Error posting IBV_WR_RDMA_READ work request: " << strerror(rc);
     if (rc == 0 && (flags & IBV_SEND_SIGNALED)) {
         connection.wr_status.in_progress_signaled_wrs += 1;
     }
 
     return wr.wr_id;
+}
+
+void RdmaEndpoint::setReadBatchSize(int batch) {
+    if (batch < 1 || batch > kMaxBatchSize) {
+        RAW_LOG(FATAL, "Invalid RDMA read batch size: %d (valid range = [1, %lu]).", batch,
+                kMaxBatchSize);
+    }
+    read_batch_size_ = batch;
+    for (RdmaConnection &connection : connections_) {
+        for (size_t i = 0; i < batch; i++) {
+            connection.req_template.read_sge_template[i].lkey = mr_->lkey;
+
+            connection.req_template.read_wr_template[i] = {
+                .next =
+                    (i == batch - 1) ? nullptr : &connection.req_template.read_wr_template[i + 1],
+                .sg_list = &connection.req_template.read_sge_template[i],
+                .num_sge = 1,
+                .opcode = IBV_WR_RDMA_READ,
+                .wr = {.rdma = {.rkey = connection.remote_info.memory_regions(0).remote_key()}},
+            };
+        }
+    }
+}
+
+uint64_t RdmaEndpoint::Read_v2(size_t remote_id, uint64_t local_offset, uint64_t remote_offset,
+                               uint32_t length, unsigned int flags) {
+    RAW_DCHECK(read_batch_size_ != -1,
+               "read_batch_size_ must be setted via setRdmaBatchSize before calling Read_v2");
+    RdmaConnection &c = connections_.at(remote_id);
+    auto remote_mr = c.remote_info.memory_regions(0);
+
+    RAW_DCHECK(local_offset + length <= buf_size_, "local offset out of bound");
+    RAW_DCHECK(remote_offset + length <= remote_mr.size(), "remote offset out of bound");
+
+    int &b = c.req_template.read_batch_idx;
+    uint64_t wr_id = c.wr_status.next_wr_id++;
+    c.req_template.read_sge_template[b].addr = reinterpret_cast<uint64_t>(buf_) + local_offset;
+    c.req_template.read_sge_template[b].length = length;
+    c.req_template.read_wr_template[b].wr_id = wr_id;
+    c.req_template.read_wr_template[b].send_flags = flags;
+    c.req_template.read_wr_template[b].wr.rdma.remote_addr = remote_mr.address() + remote_offset;
+
+    b++;
+    if (b == read_batch_size_) {
+        b = 0;
+        int rc = PostSendWithAutoReclaim(remote_id, c.req_template.read_wr_template);
+        if (rc != 0) {
+            RAW_LOG(ERROR, "Error posting IBV_WR_RDMA_READ work request (%s)", strerror(rc));
+        } else {
+            for (int i = 0; i < read_batch_size_; i++) {
+                if (c.req_template.read_wr_template[i].send_flags & IBV_SEND_SIGNALED) {
+                    c.wr_status.in_progress_signaled_wrs += 1;
+                }
+            }
+        }
+    }
+
+    return wr_id;
 }
 
 uint64_t RdmaEndpoint::Send(size_t remote_id, uint64_t offset, uint32_t length,

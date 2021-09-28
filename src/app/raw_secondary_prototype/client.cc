@@ -229,8 +229,8 @@ void ClientMain(RdmaEndpoint &ep, volatile unsigned char *const buf, IdType id,
             }
 
             // issue READ request
-            auto wr = ep.Read(id, read_offset + ComputeReadSlotOffset(rslot),
-                              r_kvs_offset + ComputeKvBufOffset(k), sizeof(KeyValuePair));
+            auto wr = ep.Read_v2(id, read_offset + ComputeReadSlotOffset(rslot),
+                                 r_kvs_offset + ComputeKvBufOffset(k), sizeof(KeyValuePair));
             // store request information for later check
             circular_pending_gets[rslot] = {.key = k, .wr_id = wr, .used = true};
             increment_rslot();
@@ -280,6 +280,10 @@ int main(int argc, char **argv) {
         ep.Listen();
         DLOG(INFO) << "Response QP " << i << " connected.";
     }
+
+    // set batch size after all connections are established
+    ep.setReadBatchSize(1);
+
     std::vector<std::thread> threads;
     std::vector<std::future<double>> get_iopses, put_iopses;
     for (int i = 0; i < local_threads; i++) {
