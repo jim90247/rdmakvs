@@ -167,8 +167,8 @@ void ClientMain(RdmaEndpoint &ep, volatile unsigned char *const buf, IdType id,
                           resbuf[s] + res_slot_offset + FLAGS_res_msg_slot_size, 0);
 
                 // write
-                auto wr = ep.Write(true, id, req_offset[s] + req_slot_offset,
-                                   r_req_offset[s] + req_slot_offset, FLAGS_req_msg_slot_size);
+                ep.Write(true, id, req_offset[s] + req_slot_offset,
+                         r_req_offset[s] + req_slot_offset, FLAGS_req_msg_slot_size);
                 // The response from server can be used as an indicator for the request completion.
                 // Therefore this waiting is optional.
                 // client.WaitForCompletion(id, true, wr);
@@ -253,6 +253,11 @@ void ClientMain(RdmaEndpoint &ep, volatile unsigned char *const buf, IdType id,
     auto bench_end = std::chrono::steady_clock::now();
     get_iops.set_value(get_rounds / std::chrono::duration<double>(bench_end - bench_begin).count());
     put_iops.set_value(tot_acked / std::chrono::duration<double>(bench_end - bench_begin).count());
+
+    delete[] req_offset;
+    delete[] r_req_offset;
+    delete[] reqbuf;
+    delete[] resbuf;
 }
 
 int main(int argc, char **argv) {

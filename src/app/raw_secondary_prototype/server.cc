@@ -110,8 +110,8 @@ void ServerMain(RdmaEndpoint &ep, volatile unsigned char *const buf, const IdTyp
                       reqbuf[c] + req_slot_offset + FLAGS_req_msg_slot_size, 0);
 
             // send response
-            auto wr = ep.Write(true, GetRespConnIdx(id, c), res_offset[c] + res_slot_offset,
-                               r_res_offset[c] + res_slot_offset, FLAGS_res_msg_slot_size);
+            ep.Write(true, GetRespConnIdx(id, c), res_offset[c] + res_slot_offset,
+                     r_res_offset[c] + res_slot_offset, FLAGS_res_msg_slot_size);
             // Receiving next request using this same slot is an indicator that this WRITE has
             // completed
             // ep.WaitForCompletion(GetRespConnIdx(id, c), true, wr);
@@ -125,6 +125,11 @@ void ServerMain(RdmaEndpoint &ep, volatile unsigned char *const buf, const IdTyp
             }
         }
     }
+
+    delete[] res_offset;
+    delete[] r_res_offset;
+    delete[] reqbuf;
+    delete[] resbuf;
 }
 
 void InitializeKvs(volatile unsigned char *kvsbuf) {
