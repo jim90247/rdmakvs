@@ -262,6 +262,7 @@ void ClientMain(RdmaEndpoint &ep, volatile unsigned char *const buf, IdType id,
 }
 
 int main(int argc, char **argv) {
+    gflags::SetUsageMessage("Secondary key-value store client prototype.");
     gflags::ParseCommandLineFlags(&argc, &argv, true);
     google::InitGoogleLogging(argv[0]);
 

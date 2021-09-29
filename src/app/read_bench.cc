@@ -186,6 +186,7 @@ void ClientMain() {
 }
 
 int main(int argc, char **argv) {
+    gflags::SetUsageMessage("A micro-benchmark for RDMA Reads.");
     gflags::ParseCommandLineFlags(&argc, &argv, true);
     google::InitGoogleLogging(argv[0]);
 

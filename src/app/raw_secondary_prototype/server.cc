@@ -142,6 +142,7 @@ void InitializeKvs(volatile unsigned char *kvsbuf) {
 }
 
 int main(int argc, char **argv) {
+    gflags::SetUsageMessage("Secondary key-value store server prototype.");
     gflags::ParseCommandLineFlags(&argc, &argv, true);
     google::InitGoogleLogging(argv[0]);
 

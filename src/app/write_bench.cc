@@ -141,6 +141,7 @@ void ClientMain() {
 int main(int argc, char **argv) {
     // TODO: the benchmark overhead is too large: single thread 80% throughput compared to HERD, and
     // 16 threads only 50% throughput, maximum around 70~80 Mops.
+    gflags::SetUsageMessage("A micro-benchmark for RDMA Writes.");
     gflags::ParseCommandLineFlags(&argc, &argv, true);
     google::InitGoogleLogging(argv[0]);
 
