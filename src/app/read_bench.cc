@@ -23,7 +23,7 @@ DEFINE_string(endpoint, "tcp://192.168.223.1:7889", "Zmq endpoint");
 DEFINE_bool(server, false, "Run as server");
 DEFINE_uint64(server_buf_size, 1 << 20, "Buffer size at server");
 DEFINE_int32(client_threads, 1, "Number of client threads");
-DEFINE_uint64(client_slots, 32, "Read slots at client");
+DEFINE_uint64(client_slots, 128, "Read slots at client");
 DEFINE_uint64(read_size, 64, "Number of bytes to fetch with each RDMA read");
 DEFINE_uint64(rounds, 1 << 20, "Number of RDMA Reads to perform on each thread");
 DEFINE_int32(batch, 1, "Number of work requests issued in one ibv_post_send");
