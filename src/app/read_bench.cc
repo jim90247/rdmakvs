@@ -34,7 +34,7 @@ DEFINE_int32(batch, 1, "Number of work requests issued in one ibv_post_send");
  * @param round the current round
  * @return the offset
  */
-size_t computeNextOffset(int64_t round) {
+size_t ComputeNextOffset(int64_t round) {
     return round % (FLAGS_server_buf_size / FLAGS_read_size);
 }
 
@@ -44,7 +44,7 @@ size_t computeNextOffset(int64_t round) {
  * @param idx the server buffer offset
  * @return the expected value
  */
-unsigned char computeExpectedValue(size_t idx) { return static_cast<unsigned char>(idx * idx); }
+unsigned char ComputeExpectedValue(size_t idx) { return static_cast<unsigned char>(idx * idx); }
 
 /**
  * @brief Checks if the received data match expected values.
@@ -53,9 +53,9 @@ unsigned char computeExpectedValue(size_t idx) { return static_cast<unsigned cha
  * @param server_offset the server offset of these data (used for computing expected value)
  * @return true if the received data is expected
  */
-bool validateReceivedData(volatile unsigned char *const buf, size_t server_offset) {
+bool ValidateReceivedData(volatile unsigned char *const buf, size_t server_offset) {
     for (size_t offset = 0; offset < FLAGS_read_size; offset++) {
-        if (buf[offset] != computeExpectedValue(server_offset + offset)) {
+        if (buf[offset] != ComputeExpectedValue(server_offset + offset)) {
             return false;
         }
     }
@@ -65,7 +65,7 @@ bool validateReceivedData(volatile unsigned char *const buf, size_t server_offse
 void ServerMain() {
     volatile unsigned char *buf = new volatile unsigned char[FLAGS_server_buf_size];
     for (int i = 0; i < FLAGS_server_buf_size; i++) {
-        buf[i] = computeExpectedValue(i);
+        buf[i] = ComputeExpectedValue(i);
     }
     RdmaEndpoint ep(nullptr, 0, buf, FLAGS_server_buf_size, 128, 128, IBV_QPT_RC);
 
@@ -122,10 +122,10 @@ void ClientThread(RdmaEndpoint &ep, volatile unsigned char *const gbuf, int id,
             ep.WaitForCompletion(id, true, circular[slot_idx].first);
             // skip check when NDEBUG is defined
             RAW_DCHECK(
-                validateReceivedData(buf + slot_idx * FLAGS_read_size, circular[slot_idx].second),
+                ValidateReceivedData(buf + slot_idx * FLAGS_read_size, circular[slot_idx].second),
                 "Got unexpected data!");
         }
-        size_t offset = computeNextOffset(r);
+        size_t offset = ComputeNextOffset(r);
         uint64_t wr = ep.Read_v2(id, base_offset + slot_idx * FLAGS_read_size, offset,
                                  FLAGS_read_size, IBV_SEND_SIGNALED);
         circular[slot_idx] = std::make_pair(wr, offset);
@@ -138,7 +138,7 @@ void ClientThread(RdmaEndpoint &ep, volatile unsigned char *const gbuf, int id,
             ep.WaitForCompletion(id, true, circular[slot_idx].first);
             // skip check when NDEBUG is defined
             RAW_DCHECK(
-                validateReceivedData(buf + slot_idx * FLAGS_read_size, circular[slot_idx].second),
+                ValidateReceivedData(buf + slot_idx * FLAGS_read_size, circular[slot_idx].second),
                 "Got unexpected data!");
         }
     }
