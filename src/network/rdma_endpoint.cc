@@ -226,6 +226,12 @@ void RdmaEndpoint::ExchangePeerInfo(size_t peer_idx, bool send_first) {
 }
 
 void RdmaEndpoint::ConnectPeer(size_t peer_idx) {
+    struct ibv_device_attr dev_attr;
+    int rc = ibv_query_device(ctx_, &dev_attr);
+    if (rc != 0) {
+        RAW_LOG(FATAL, "Failed to query device: %s", strerror(rc));
+    }
+
     RdmaConnection &connection = connections_.at(peer_idx);
     struct ibv_qp_attr qp_attr = {
         .qp_state = IBV_QPS_RTR,
@@ -241,7 +247,8 @@ void RdmaEndpoint::ConnectPeer(size_t peer_idx) {
                 .is_global = 0,
                 .port_num = ib_dev_port_,
             },
-        .max_dest_rd_atomic = 1,
+        // assume using same IB NIC on both local and remote
+        .max_dest_rd_atomic = static_cast<std::uint8_t>(dev_attr.max_qp_rd_atom),
         .min_rnr_timer = 12,
     };
 
@@ -256,7 +263,7 @@ void RdmaEndpoint::ConnectPeer(size_t peer_idx) {
     qp_attr.retry_cnt = 7;
     qp_attr.rnr_retry = 7;
     qp_attr.sq_psn = connection.local_info.queue_pair().packet_serial_number();
-    qp_attr.max_rd_atomic = 1;
+    qp_attr.max_rd_atomic = dev_attr.max_qp_rd_atom;
     CHECK_EQ(ibv_modify_qp(connection.qp, &qp_attr,
                            IBV_QP_STATE | IBV_QP_TIMEOUT | IBV_QP_RETRY_CNT | IBV_QP_RNR_RETRY |
                                IBV_QP_SQ_PSN | IBV_QP_MAX_QP_RD_ATOMIC),
