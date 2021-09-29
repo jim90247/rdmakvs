@@ -15,6 +15,7 @@
 #include "network/rdma.h"
 #include "util/zipf_generator.h"
 
+using std::int64_t;
 using std::uint64_t;
 using namespace std::chrono_literals;
 
@@ -24,8 +25,41 @@ DEFINE_uint64(server_buf_size, 1 << 20, "Buffer size at server");
 DEFINE_int32(client_threads, 1, "Number of client threads");
 DEFINE_uint64(client_slots, 32, "Read slots at client");
 DEFINE_uint64(read_size, 64, "Number of bytes to fetch with each RDMA read");
+DEFINE_uint64(rounds, 1 << 20, "Number of RDMA Reads to perform on each thread");
 
+/**
+ * @brief Computes the next offset to read.
+ *
+ * @param round the current round
+ * @return the offset
+ */
+size_t computeNextOffset(int64_t round) {
+    return round % (FLAGS_server_buf_size / FLAGS_read_size);
+}
+
+/**
+ * @brief Computes the expected value at given offset.
+ *
+ * @param idx the server buffer offset
+ * @return the expected value
+ */
 unsigned char computeExpectedValue(size_t idx) { return static_cast<unsigned char>(idx * idx); }
+
+/**
+ * @brief Checks if the received data match expected values.
+ * 
+ * @param buf the buffer containing received data
+ * @param server_offset the server offset of these data (used for computing expected value)
+ * @return true if the received data is expected
+ */
+bool validateReceivedData(volatile unsigned char *const buf, size_t server_offset) {
+    for (size_t offset = 0; offset < FLAGS_read_size; offset++) {
+        if (buf[offset] != computeExpectedValue(server_offset + offset)) {
+            return false;
+        }
+    }
+    return true;
+}
 
 void ServerMain() {
     volatile unsigned char *buf = new volatile unsigned char[FLAGS_server_buf_size];
@@ -68,6 +102,7 @@ void ServerMain() {
 void ClientThread(RdmaEndpoint &ep, volatile unsigned char *const gbuf, int id,
                   std::promise<double> &&iops_result) {
     size_t base_offset = FLAGS_read_size * FLAGS_client_slots * id;
+    volatile unsigned char *const buf = gbuf + base_offset;
 
     {
         // receive an one-byte signal indicating the start of benchmark
@@ -76,7 +111,38 @@ void ClientThread(RdmaEndpoint &ep, volatile unsigned char *const gbuf, int id,
     }
     RAW_LOG(INFO, "thread %d start", id);
 
-    std::this_thread::sleep_for(1s);
+    auto begin = std::chrono::steady_clock::now();
+
+    // work request id, offset
+    std::vector<std::pair<uint64_t, ssize_t>> circular(FLAGS_client_slots, std::make_pair(0, -1));
+    size_t slot_idx = 0;
+    for (uint64_t r = 0; r < FLAGS_rounds; r++) {
+        if (circular[slot_idx].second != -1) {
+            ep.WaitForCompletion(id, true, circular[slot_idx].first);
+            // skip check when NDEBUG is defined
+            RAW_DCHECK(
+                validateReceivedData(buf + slot_idx * FLAGS_read_size, circular[slot_idx].second),
+                "Got unexpected data!");
+        }
+        size_t offset = computeNextOffset(r);
+        uint64_t wr = ep.Read(id, base_offset + slot_idx * FLAGS_read_size, offset, FLAGS_read_size,
+                              IBV_SEND_SIGNALED);
+        circular[slot_idx] = std::make_pair(wr, offset);
+        slot_idx = (slot_idx == FLAGS_client_slots - 1 ? 0 : slot_idx + 1);
+    }
+
+    for (slot_idx = 0; slot_idx < FLAGS_client_slots; slot_idx++) {
+        if (circular[slot_idx].second != -1) {
+            ep.WaitForCompletion(id, true, circular[slot_idx].first);
+            // skip check when NDEBUG is defined
+            RAW_DCHECK(
+                validateReceivedData(buf + slot_idx * FLAGS_read_size, circular[slot_idx].second),
+                "Got unexpected data!");
+        }
+    }
+
+    auto end = std::chrono::steady_clock::now();
+    iops_result.set_value(FLAGS_rounds / std::chrono::duration<double>(end - begin).count());
 
     {
         // send an one-byte signal indicating this thread has completed benchmark
@@ -84,7 +150,6 @@ void ClientThread(RdmaEndpoint &ep, volatile unsigned char *const gbuf, int id,
         ep.WaitForCompletion(id, true, wr);
     }
     RAW_LOG(INFO, "thread %d completed", id);
-    iops_result.set_value(0.0);
 }
 
 void ClientMain() {
