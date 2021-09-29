@@ -237,6 +237,7 @@ void ClientMain(RdmaEndpoint &ep, volatile unsigned char *const buf, IdType id,
             get_rounds++;
         }
     }
+    ep.FlushPendingReads(id);
 
     // process remaining pending GET requests
     for (int _ = 0; _ < FLAGS_readbuf_slots; _++) {
@@ -287,7 +288,7 @@ int main(int argc, char **argv) {
     }
 
     // set batch size after all connections are established
-    ep.setReadBatchSize(1);
+    ep.SetReadBatchSize(1);
 
     std::vector<std::thread> threads;
     std::vector<std::future<double>> get_iopses, put_iopses;

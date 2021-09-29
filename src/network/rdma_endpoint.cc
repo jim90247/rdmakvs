@@ -455,7 +455,7 @@ uint64_t RdmaEndpoint::Read(size_t remote_id, uint64_t local_offset, uint64_t re
     return wr.wr_id;
 }
 
-void RdmaEndpoint::setReadBatchSize(int batch) {
+void RdmaEndpoint::SetReadBatchSize(int batch) {
     if (batch < 1 || batch > kMaxBatchSize) {
         RAW_LOG(FATAL, "Invalid RDMA read batch size: %d (valid range = [1, %lu]).", batch,
                 kMaxBatchSize);
@@ -480,7 +480,7 @@ void RdmaEndpoint::setReadBatchSize(int batch) {
 uint64_t RdmaEndpoint::Read_v2(size_t remote_id, uint64_t local_offset, uint64_t remote_offset,
                                uint32_t length, unsigned int flags) {
     RAW_DCHECK(read_batch_size_ != -1,
-               "read_batch_size_ must be setted via setRdmaBatchSize before calling Read_v2");
+               "read_batch_size_ must be setted via SetReadBatchSize before calling Read_v2");
     RdmaConnection &c = connections_.at(remote_id);
     auto remote_mr = c.remote_info.memory_regions(0);
 
@@ -511,6 +511,36 @@ uint64_t RdmaEndpoint::Read_v2(size_t remote_id, uint64_t local_offset, uint64_t
     }
 
     return wr_id;
+}
+
+bool RdmaEndpoint::FlushPendingReads(size_t remote_id) {
+    RdmaConnection &c = connections_.at(remote_id);
+    int &b = c.req_template.read_batch_idx;
+    if (b == 0) {
+        // nothing to do if there's no pending request
+        return true;
+    }
+    // break the linked list
+    c.req_template.read_wr_template[b].next = nullptr;
+
+    int rc = PostSendWithAutoReclaim(remote_id, c.req_template.read_wr_template);
+    if (rc != 0) {
+        RAW_LOG(ERROR, "Error posting IBV_WR_RDMA_READ work request (%s)", strerror(rc));
+    } else {
+        for (int i = 0; i < b; i++) {
+            if (c.req_template.read_wr_template[i].send_flags & IBV_SEND_SIGNALED) {
+                c.wr_status.in_progress_signaled_wrs += 1;
+            }
+        }
+    }
+
+    if (b < read_batch_size_ - 1) {
+        // recover the linked list
+        c.req_template.read_wr_template[b].next = &c.req_template.read_wr_template[b + 1];
+    }
+    b = 0;
+
+    return rc == 0;
 }
 
 uint64_t RdmaEndpoint::Send(size_t remote_id, uint64_t offset, uint32_t length,

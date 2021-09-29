@@ -26,6 +26,7 @@ DEFINE_int32(client_threads, 1, "Number of client threads");
 DEFINE_uint64(client_slots, 32, "Read slots at client");
 DEFINE_uint64(read_size, 64, "Number of bytes to fetch with each RDMA read");
 DEFINE_uint64(rounds, 1 << 20, "Number of RDMA Reads to perform on each thread");
+DEFINE_int32(batch, 1, "Number of work requests issued in one ibv_post_send");
 
 /**
  * @brief Computes the next offset to read.
@@ -47,7 +48,7 @@ unsigned char computeExpectedValue(size_t idx) { return static_cast<unsigned cha
 
 /**
  * @brief Checks if the received data match expected values.
- * 
+ *
  * @param buf the buffer containing received data
  * @param server_offset the server offset of these data (used for computing expected value)
  * @return true if the received data is expected
@@ -125,11 +126,12 @@ void ClientThread(RdmaEndpoint &ep, volatile unsigned char *const gbuf, int id,
                 "Got unexpected data!");
         }
         size_t offset = computeNextOffset(r);
-        uint64_t wr = ep.Read(id, base_offset + slot_idx * FLAGS_read_size, offset, FLAGS_read_size,
-                              IBV_SEND_SIGNALED);
+        uint64_t wr = ep.Read_v2(id, base_offset + slot_idx * FLAGS_read_size, offset,
+                                 FLAGS_read_size, IBV_SEND_SIGNALED);
         circular[slot_idx] = std::make_pair(wr, offset);
         slot_idx = (slot_idx == FLAGS_client_slots - 1 ? 0 : slot_idx + 1);
     }
+    ep.FlushPendingReads(id);
 
     for (slot_idx = 0; slot_idx < FLAGS_client_slots; slot_idx++) {
         if (circular[slot_idx].second != -1) {
@@ -162,6 +164,7 @@ void ClientMain() {
         ep.Connect(FLAGS_endpoint.c_str());
     }
     LOG(INFO) << "all clients connected";
+    ep.SetReadBatchSize(FLAGS_batch);
 
     std::vector<std::thread> threads;
     std::vector<std::future<double>> iopses;

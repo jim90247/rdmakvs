@@ -60,7 +60,7 @@ class RdmaEndpoint {
      *
      * @param batch the batch size
      */
-    virtual void setReadBatchSize(int batch);
+    virtual void SetReadBatchSize(int batch);
 
     /**
      * @brief Performs RDMA read using pre-allocated buffer.
@@ -74,6 +74,15 @@ class RdmaEndpoint {
      */
     virtual uint64_t Read_v2(size_t remote_id, uint64_t local_offset, uint64_t remote_offset,
                              uint32_t length, unsigned int flags = IBV_SEND_SIGNALED);
+
+    /**
+     * @brief Sends out the pending RDMA Read requests. Useful for ensuring all requests are issued
+     * when using batch size greater than 1.
+     *
+     * @param remote_id the id of the connection to perform RDMA operation
+     * @return true if all the remaining requests are flushed successfully
+     */
+    virtual bool FlushPendingReads(size_t remote_id);
 
     virtual uint64_t Send(size_t remote_id, uint64_t offset, uint32_t length,
                           unsigned int flags = IBV_SEND_SIGNALED);
@@ -128,7 +137,7 @@ class RdmaEndpoint {
         struct ibv_sge read_sge_template[kMaxBatchSize];
     };
 
-    // must be set with setReadBatchSize()
+    // must be set with SetReadBatchSize()
     int read_batch_size_ = -1;
 
     // Work request usage status of a RDMA connection
