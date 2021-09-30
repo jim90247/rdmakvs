@@ -151,6 +151,46 @@ void ClientMain(RdmaEndpoint &ep, volatile unsigned char *const buf, IdType id,
     while (tot_acked < tot_put_rounds) {
         auto op = NextOp();
         if (op == KvsOp::PUT) {
+            while (!used_slots[s].empty() && acked[s] < FLAGS_put_rounds) {
+                // check message present
+                int slot = used_slots[s].front();
+                size_t slot_offset = ComputeResSlotOffset(slot);
+                if (!CheckResMsgPresent(resbuf[s] + slot_offset)) {
+                    if (free_slots[s].empty()) {
+                        // keep waiting for message until this slot can be freed
+                        continue;
+                    } else {
+                        // no need to block until this slot becomes available since there's still
+                        // other free slots available
+                        break;
+                    }
+                }
+
+                // get message
+#ifdef NDEBUG
+                int rc = ParseScalarFromMsg<int>(resbuf[s] + slot_offset);
+                RAW_CHECK(rc == 0, "Got a non-zero return code.");
+#else
+                auto kvp_ptr = ParseKvpFromMsgRaw(resbuf[s] + slot_offset);
+                std::string expected_value = GetValueStr(s, gid, acked[s]);
+                DCHECK_EQ(acked[s], kvp_ptr->key);
+                DCHECK_STREQ(expected_value.c_str(), const_cast<char *>(kvp_ptr->value));
+#endif
+
+                // reclaim
+                used_slots[s].pop();
+                free_slots[s].push(slot);
+                ++acked[s];
+                ++tot_acked;
+
+                if (acked[s] % (FLAGS_put_rounds / 10) == 0) {
+#ifndef NDEBUG
+                    RAW_DLOG(INFO, "c_id: %d, (s_id: %d) Acknowledged: %d (last: '%s')", id, s,
+                             acked[s], kvp_ptr->value);
+#endif
+                }
+            }
+
             if (sent[s] < FLAGS_put_rounds && !free_slots[s].empty()) {
                 // create message
                 std::string value = GetValueStr(s, gid, sent[s]);
@@ -184,38 +224,6 @@ void ClientMain(RdmaEndpoint &ep, volatile unsigned char *const buf, IdType id,
                 }
             }
 
-            while (!used_slots[s].empty() && acked[s] < FLAGS_put_rounds) {
-                // check message present
-                int slot = used_slots[s].front();
-                size_t slot_offset = ComputeResSlotOffset(slot);
-                if (!CheckResMsgPresent(resbuf[s] + slot_offset)) {
-                    break;
-                }
-
-                // get message
-#ifdef NDEBUG
-                int rc = ParseScalarFromMsg<int>(resbuf[s] + slot_offset);
-                RAW_CHECK(rc == 0, "Got a non-zero return code.");
-#else
-                auto kvp_ptr = ParseKvpFromMsgRaw(resbuf[s] + slot_offset);
-                std::string expected_value = GetValueStr(s, gid, acked[s]);
-                DCHECK_EQ(acked[s], kvp_ptr->key);
-                DCHECK_STREQ(expected_value.c_str(), const_cast<char *>(kvp_ptr->value));
-#endif
-
-                // reclaim
-                used_slots[s].pop();
-                free_slots[s].push(slot);
-                ++acked[s];
-                ++tot_acked;
-
-                if (acked[s] % (FLAGS_put_rounds / 10) == 0) {
-#ifndef NDEBUG
-                    RAW_DLOG(INFO, "c_id: %d, (s_id: %d) Acknowledged: %d (last: '%s')", id, s,
-                             acked[s], kvp_ptr->value);
-#endif
-                }
-            }
             increment_sid();
         } else if (op == KvsOp::GET) {
             KeyType k = NextKey();
