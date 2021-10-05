@@ -18,7 +18,7 @@ DEFINE_uint64(res_msg_slot_size,
 #endif
               "Size of each response message slot");
 DEFINE_uint64(msg_slots, 4096, "Message slots for in/out message each");
-DEFINE_int32(put_rounds, 100, "PUT Rounds");
+DEFINE_int64(total_ops, 1000, "Total number of operations to perform including GETs and PUTs");
 // TODO: parse server threads from config file
 DEFINE_int32(server_threads, 1, "Server threads");
 // TODO: compute total client threads from config file

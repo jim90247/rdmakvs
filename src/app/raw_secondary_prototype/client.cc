@@ -112,8 +112,8 @@ void ClientMain(RdmaEndpoint &ep, volatile unsigned char *const buf, IdType id,
         circular_pending_gets[i].used = false;
     }
 
-    int tot_acked = 0, tot_sent = 0, tot_put_rounds = FLAGS_put_rounds * FLAGS_server_threads;
     std::vector<int> acked(FLAGS_server_threads), sent(FLAGS_server_threads);
+    long put_ops = 0;
 
     IdType s = 0;
     auto increment_sid = [&s]() {
@@ -123,8 +123,8 @@ void ClientMain(RdmaEndpoint &ep, volatile unsigned char *const buf, IdType id,
         }
     };
     int rslot = 0;
-    long get_rounds = 0;
-    auto increment_rslot = [&rslot, &get_rounds]() {
+    long get_ops = 0;
+    auto increment_rslot = [&rslot]() {
         rslot++;
         if (rslot == FLAGS_readbuf_slots) {
             rslot = 0;
@@ -148,10 +148,10 @@ void ClientMain(RdmaEndpoint &ep, volatile unsigned char *const buf, IdType id,
     ep.InitializeFastWrite(id, 1);
 
     auto bench_begin = std::chrono::steady_clock::now();
-    while (tot_acked < tot_put_rounds) {
+    while (get_ops + put_ops < FLAGS_total_ops) {
         auto op = NextOp();
         if (op == KvsOp::PUT) {
-            while (!used_slots[s].empty() && acked[s] < FLAGS_put_rounds) {
+            while (!used_slots[s].empty()) {
                 // check message present
                 int slot = used_slots[s].front();
                 size_t slot_offset = ComputeResSlotOffset(slot);
@@ -181,17 +181,10 @@ void ClientMain(RdmaEndpoint &ep, volatile unsigned char *const buf, IdType id,
                 used_slots[s].pop();
                 free_slots[s].push(slot);
                 ++acked[s];
-                ++tot_acked;
-
-                if (acked[s] % (FLAGS_put_rounds / 10) == 0) {
-#ifndef NDEBUG
-                    RAW_DLOG(INFO, "c_id: %d, (s_id: %d) Acknowledged: %d (last: '%s')", id, s,
-                             acked[s], kvp_ptr->value);
-#endif
-                }
             }
 
-            if (sent[s] < FLAGS_put_rounds && !free_slots[s].empty()) {
+            RAW_DCHECK(!free_slots[s].empty(), "there should be at least one free slots available");
+            if (!free_slots[s].empty()) {
                 // create message
                 std::string value = GetValueStr(s, gid, sent[s]);
                 auto kvp = KeyValuePair::Create(sent[s], value.length() + 1, value.c_str());
@@ -217,11 +210,7 @@ void ClientMain(RdmaEndpoint &ep, volatile unsigned char *const buf, IdType id,
                 free_slots[s].pop();
                 used_slots[s].push(slot);
                 ++sent[s];
-                ++tot_sent;
-
-                if (sent[s] % (FLAGS_put_rounds / 10) == 0) {
-                    RAW_DLOG(INFO, "c_id: %d, (s_id: %d) Sent: %d", id, s, sent[s]);
-                }
+                ++put_ops;
             }
 
             increment_sid();
@@ -242,12 +231,17 @@ void ClientMain(RdmaEndpoint &ep, volatile unsigned char *const buf, IdType id,
             // store request information for later check
             circular_pending_gets[rslot] = {.key = k, .wr_id = wr, .used = true};
             increment_rslot();
-            get_rounds++;
+            get_ops++;
+        }
+
+        if ((get_ops + put_ops) % (FLAGS_total_ops / 10) == 0) {
+            RAW_DLOG(INFO, "client %2d, get ops: %ld, put ops: %ld", id, get_ops, put_ops);
         }
     }
+    // process remaining pending GET requests
     ep.FlushPendingReads(id);
 
-    // process remaining pending GET requests
+    // wait for pending GET requests to complete
     for (int _ = 0; _ < FLAGS_readbuf_slots; _++) {
         if (!circular_pending_gets[rslot].used) {
             continue;
@@ -259,9 +253,37 @@ void ClientMain(RdmaEndpoint &ep, volatile unsigned char *const buf, IdType id,
         increment_rslot();
     }
 
+    // wait for in-progress PUT requests to complete
+    for (int _ = 0; _ < FLAGS_server_threads; _++) {
+        while (!used_slots[s].empty()) {
+            int slot = used_slots[s].front();
+            size_t slot_offset = ComputeResSlotOffset(slot);
+            // wait until message arrives
+            while (!CheckResMsgPresent(resbuf[s] + slot_offset))
+                ;
+
+                // get message
+#ifdef NDEBUG
+            int rc = ParseScalarFromMsg<int>(resbuf[s] + slot_offset);
+            RAW_CHECK(rc == 0, "Got a non-zero return code.");
+#else
+            auto kvp_ptr = ParseKvpFromMsgRaw(resbuf[s] + slot_offset);
+            std::string expected_value = GetValueStr(s, gid, acked[s]);
+            DCHECK_EQ(acked[s], kvp_ptr->key);
+            DCHECK_STREQ(expected_value.c_str(), const_cast<char *>(kvp_ptr->value));
+#endif
+
+            // reclaim
+            used_slots[s].pop();
+            free_slots[s].push(slot);
+            ++acked[s];
+        }
+        increment_sid();
+    }
+
     auto bench_end = std::chrono::steady_clock::now();
-    get_iops.set_value(get_rounds / std::chrono::duration<double>(bench_end - bench_begin).count());
-    put_iops.set_value(tot_acked / std::chrono::duration<double>(bench_end - bench_begin).count());
+    get_iops.set_value(get_ops / std::chrono::duration<double>(bench_end - bench_begin).count());
+    put_iops.set_value(put_ops / std::chrono::duration<double>(bench_end - bench_begin).count());
 
     delete[] req_offset;
     delete[] r_req_offset;
