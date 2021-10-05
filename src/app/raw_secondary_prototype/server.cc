@@ -61,7 +61,6 @@ void ServerMain(RdmaEndpoint &ep, volatile unsigned char *const buf, const IdTyp
 
     std::vector<int> slot(FLAGS_total_client_threads, 0);
 
-    int tot_processed = 0, tot_put_rounds = FLAGS_put_rounds * FLAGS_total_client_threads;
     std::vector<int> processed(FLAGS_total_client_threads, 0);
 
     // Use pre-initialized writes for slightly better performance
@@ -69,11 +68,10 @@ void ServerMain(RdmaEndpoint &ep, volatile unsigned char *const buf, const IdTyp
         ep.InitializeFastWrite(GetRespConnIdx(id, c), 1);
     }
 
-    while (tot_processed < tot_put_rounds) {
+    // keep polling for requests
+    while (true) {
+        // poll each client's request buffer in turns
         for (int c = 0; c < FLAGS_total_client_threads; c++) {
-            if (processed[c] >= FLAGS_put_rounds) {
-                continue;
-            }
             // check message present
             size_t req_slot_offset = ComputeReqSlotOffset(slot[c]);
             if (!CheckReqMsgPresent(reqbuf[c] + req_slot_offset)) {
@@ -117,12 +115,7 @@ void ServerMain(RdmaEndpoint &ep, volatile unsigned char *const buf, const IdTyp
             // ep.WaitForCompletion(GetRespConnIdx(id, c), true, wr);
 
             ++processed[c];
-            ++tot_processed;
             slot[c] = (slot[c] + 1) % FLAGS_msg_slots;
-
-            if (processed[c] % (FLAGS_put_rounds / 10) == 0) {
-                RAW_DLOG(INFO, "s_id: %d, (c_id: %d) Processed: %d", id, c, processed[c]);
-            }
         }
     }
 
