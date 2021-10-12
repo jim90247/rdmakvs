@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "network/rdma.h"
+#include "util/stats.h"
 #include "util/zipf_generator.h"
 
 using std::int64_t;
@@ -144,7 +145,7 @@ void ClientThread(RdmaEndpoint &ep, volatile unsigned char *const gbuf, int id,
     }
 
     auto end = std::chrono::steady_clock::now();
-    iops_result.set_value(FLAGS_rounds / std::chrono::duration<double>(end - begin).count());
+    iops_result.set_value(ComputeOperationsPerSecond(begin, end, FLAGS_rounds));
 
     {
         // send an one-byte signal indicating this thread has completed benchmark

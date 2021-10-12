@@ -16,6 +16,7 @@
 #include "app/raw_secondary_prototype/common.h"
 #include "network/rdma.h"
 #include "util/node_config.h"
+#include "util/stats.h"
 #include "util/zipf_generator.h"
 
 DEFINE_string(node_name, "", "Node name defined in node config");
@@ -282,8 +283,8 @@ void ClientMain(RdmaEndpoint &ep, volatile unsigned char *const buf, IdType id,
     }
 
     auto bench_end = std::chrono::steady_clock::now();
-    get_iops.set_value(get_ops / std::chrono::duration<double>(bench_end - bench_begin).count());
-    put_iops.set_value(put_ops / std::chrono::duration<double>(bench_end - bench_begin).count());
+    get_iops.set_value(ComputeOperationsPerSecond(bench_begin, bench_end, get_ops));
+    put_iops.set_value(ComputeOperationsPerSecond(bench_begin, bench_end, put_ops));
 
     delete[] req_offset;
     delete[] r_req_offset;

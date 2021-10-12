@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "network/rdma.h"
+#include "util/stats.h"
 
 using std::uint64_t;
 using namespace std::chrono_literals;
@@ -102,9 +103,7 @@ void ClientThreadWriteMain(volatile char *buffer, RdmaEndpoint &client, size_t r
     uint64_t end_response_tracker = client.Send(remote_id, local_thread_offset, sizeof(int));
     client.WaitForCompletion(remote_id, true, end_response_tracker);
 
-    double iops = FLAGS_rounds * 1e6 /
-                  static_cast<double>(
-                      std::chrono::duration_cast<std::chrono::microseconds>(end - start).count());
+    double iops = ComputeOperationsPerSecond(start, end, FLAGS_rounds);
     iops_result.set_value(iops);
     LOG(INFO) << "Client " << client_id << " completes with IOPS " << iops;
 }
