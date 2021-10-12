@@ -1,1 +1,1 @@
-add_subdirectory(kvs)
+add_subdirectory(util)
