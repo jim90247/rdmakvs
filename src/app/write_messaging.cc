@@ -33,21 +33,21 @@ const size_t kMessageSize = 16;
 const size_t kLatencyMeasurePeriod = 101;
 
 void ServerMain() {
-    size_t local_buffer_offset = 1024; // for testing different local and remote offsets
+    size_t local_buffer_offset = 1024;  // for testing different local and remote offsets
     volatile unsigned char *buffer =
         new volatile unsigned char[kBufferSize + local_buffer_offset]();
-    RdmaServer *rdma_server = new RdmaServer(FLAGS_endpoint.c_str(), nullptr, 0, buffer,
-                                             kBufferSize, 128, 128, IBV_QPT_RC);
-    rdma_server->Listen();
-    rdmamsg::RdmaWriteMessagingEndpoint *msg_ep = new rdmamsg::RdmaWriteMessagingEndpoint(
-        rdma_server, buffer, 0, local_buffer_offset, 0, kBufferSize);
+    RdmaEndpoint endpoint(nullptr, 0, buffer, kBufferSize, 128, 128, IBV_QPT_RC);
+    endpoint.BindToZmqEndpoint(FLAGS_endpoint.c_str());
+    endpoint.Listen();
+    rdmamsg::RdmaWriteMessagingEndpoint msg_ep(endpoint, buffer, 0, local_buffer_offset, 0,
+                                               kBufferSize);
 
     for (unsigned long round = 0, flush_round = 0, refresh_round = 0; round < FLAGS_round;
          round++) {
         // Wait for request
         rdmamsg::InboundMessage request = {.data = nullptr, .size = 0};
         while (request.size == 0) {
-            request = msg_ep->CheckInboundMessage();
+            request = msg_ep.CheckInboundMessage();
         }
 
         // Process request
@@ -55,15 +55,15 @@ void ServerMain() {
         }
 
         if (++refresh_round >= FLAGS_inbound_gc_period) {
-            msg_ep->ReleaseInboundMessageBuffer();
+            msg_ep.ReleaseInboundMessageBuffer();
             refresh_round = 0;
         }
 
         // Send response
         *reinterpret_cast<volatile unsigned long *>(
-            msg_ep->AllocateOutboundMessageBuffer(sizeof(unsigned long))) = round;
+            msg_ep.AllocateOutboundMessageBuffer(sizeof(unsigned long))) = round;
         if (++flush_round >= FLAGS_outbound_batch) {
-            msg_ep->FlushOutboundMessage();
+            msg_ep.FlushOutboundMessage();
             flush_round = 0;
         }
     }
@@ -76,10 +76,9 @@ void ClientMain() {
         << "This will run for " << FLAGS_round
         << " rounds. Consider using smaller rounds to measure latency to prevent other overhead.";
     volatile unsigned char *buffer = new volatile unsigned char[kBufferSize]();
-    RdmaClient *rdma_client = new RdmaClient(nullptr, 0, buffer, kBufferSize, 128, 128, IBV_QPT_RC);
-    rdma_client->Connect(FLAGS_endpoint.c_str());
-    rdmamsg::RdmaWriteMessagingEndpoint *msg_ep = new rdmamsg::RdmaWriteMessagingEndpoint(
-        rdma_client, buffer, 0, 0, 0, kBufferSize);
+    RdmaEndpoint endpoint(nullptr, 0, buffer, kBufferSize, 128, 128, IBV_QPT_RC);
+    endpoint.Connect(FLAGS_endpoint.c_str());
+    rdmamsg::RdmaWriteMessagingEndpoint msg_ep(endpoint, buffer, 0, 0, 0, kBufferSize);
 
     unsigned long sent_round = 0, completed_round = 0, flush_round = 0, refresh_round = 0,
                   latency_measure_send_round = 0, latency_measure_recv_round = 0;
@@ -91,10 +90,10 @@ void ClientMain() {
         // Send request
         if (sent_round < FLAGS_round) {
             *reinterpret_cast<volatile unsigned long *>(
-                msg_ep->AllocateOutboundMessageBuffer(sizeof(unsigned long))) = sent_round;
+                msg_ep.AllocateOutboundMessageBuffer(sizeof(unsigned long))) = sent_round;
             sent_round++;
             if (++flush_round >= FLAGS_outbound_batch) {
-                msg_ep->FlushOutboundMessage();
+                msg_ep.FlushOutboundMessage();
                 flush_round = 0;
             }
             if (++latency_measure_send_round >= kLatencyMeasurePeriod) {
@@ -103,7 +102,7 @@ void ClientMain() {
             }
         }
         // Check for response
-        rdmamsg::InboundMessage response = msg_ep->CheckInboundMessage();
+        rdmamsg::InboundMessage response = msg_ep.CheckInboundMessage();
         if (response.size > 0) {
             DCHECK_EQ(sizeof(unsigned long), response.size);
             // FIXME: when using `while` instead of `if`, this check sometimes fails at the
@@ -117,7 +116,7 @@ void ClientMain() {
                 latency_measure_recv_round = 0;
             }
             if (++refresh_round >= FLAGS_inbound_gc_period) {
-                msg_ep->ReleaseInboundMessageBuffer();
+                msg_ep.ReleaseInboundMessageBuffer();
                 refresh_round = 0;
             }
         }

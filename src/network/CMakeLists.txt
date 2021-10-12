@@ -3,9 +3,7 @@ project(network CXX)
 
 set(SOURCE_FILES
     rdma.h
-    rdma_client.cc
     rdma_endpoint.cc
-    rdma_server.cc
 )
 add_library(network ${SOURCE_FILES})
 

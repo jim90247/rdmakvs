@@ -19,11 +19,11 @@ struct InboundMessage {
  * @brief A wrapper that uses a subset of RdmaEndpoint buffer to provide messaging between a pair of
  * RdmaConnections.
  */
-class RdmaWriteMessagingEndpoint {
+class [[deprecated]] RdmaWriteMessagingEndpoint {
    public:
     const static int64_t kNoOutboundMessage = -1;
 
-    RdmaWriteMessagingEndpoint(RdmaEndpoint* endpoint, volatile unsigned char* rdma_buffer,
+    RdmaWriteMessagingEndpoint(RdmaEndpoint& endpoint, volatile unsigned char* rdma_buffer,
                                int peer_id, size_t local_buffer_offset, size_t remote_buffer_offset,
                                size_t messaging_buffer_size);
     /**
@@ -72,7 +72,7 @@ class RdmaWriteMessagingEndpoint {
     };
 
    private:
-    RdmaEndpoint* endpoint_;
+    RdmaEndpoint& endpoint_;
     const int peer_id_;
     std::queue<OutboundMessage> outbound_pending_message_;
     volatile unsigned char* rdma_buffer_;

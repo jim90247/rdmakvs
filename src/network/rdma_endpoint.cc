@@ -22,8 +22,7 @@ RdmaEndpoint::RdmaEndpoint(char *ib_dev_name, uint8_t ib_dev_port, volatile unsi
       buf_size_(buffer_size),
       max_send_count_(max_send_count),
       max_recv_count_(max_recv_count),
-      qp_type_(qp_type),
-      zmq_socket_(nullptr) {
+      qp_type_(qp_type) {
     CHECK(buf_ != nullptr) << "Provided buffer pointer is a nullptr";
 
     zmq_context_ = zmq_ctx_new();
@@ -219,10 +218,6 @@ void RdmaEndpoint::ExchangePeerInfo(void *zmq_socket, size_t peer_idx, bool send
 
     DLOG(INFO) << "Remote peer " << peer_idx
                << " information: " << connection.remote_info.ShortDebugString();
-}
-
-void RdmaEndpoint::ExchangePeerInfo(size_t peer_idx, bool send_first) {
-    ExchangePeerInfo(zmq_socket_, peer_idx, send_first);
 }
 
 void RdmaEndpoint::ConnectPeer(size_t peer_idx) {

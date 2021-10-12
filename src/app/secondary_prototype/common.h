@@ -30,5 +30,5 @@ struct KeyValuePair {
 KeyValuePair CreateKvPair(int key, std::string value);
 KeyValuePair ParseKeyValuePair(volatile void *ptr);
 void SerializeKeyValuePair(volatile void *ptr, const KeyValuePair &kv_pair);
-void ExchangeInfo(RdmaEndpoint *endpoint, int remote_id, size_t send_offset, size_t send_size, size_t recv_offset,
-                  size_t recv_size, bool send_first);
+void ExchangeInfo(RdmaEndpoint &endpoint, int remote_id, size_t send_offset, size_t send_size,
+                  size_t recv_offset, size_t recv_size, bool send_first);

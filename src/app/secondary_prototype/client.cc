@@ -20,7 +20,7 @@ bool DoPut() {
 
 size_t ComputeRemoteMsgOffset(int client_id) { return client_id * kPerThreadMsgBufferSize; }
 
-void ClientThreadMain(RdmaClient *client, volatile unsigned char *buffer, int local_id) {
+void ClientThreadMain(RdmaEndpoint &client, volatile unsigned char *buffer, int local_id) {
     const size_t base_offset = local_id * kClientPerThreadBufferSize;
     const size_t read_buffer_offset = base_offset + kPerThreadMsgBufferSize;
 
@@ -62,8 +62,8 @@ void ClientThreadMain(RdmaClient *client, volatile unsigned char *buffer, int lo
         } else {
             size_t key_offset =
                 ComputeKeyOffset(key) + total_server_threads * kPerThreadMsgBufferSize;
-            uint64_t wr_id = client->Read(local_id, read_buffer_offset, key_offset, kEntrySize);
-            client->WaitForCompletion(local_id, true, wr_id);
+            uint64_t wr_id = client.Read(local_id, read_buffer_offset, key_offset, kEntrySize);
+            client.WaitForCompletion(local_id, true, wr_id);
             KeyValuePair kv_pair = ParseKeyValuePair(buffer + read_buffer_offset);
             CHECK(kv_pair.key == key);
             LOG(INFO) << "local_id " << local_id
@@ -79,18 +79,18 @@ int main(int argc, char **argv) {
 
     volatile unsigned char *buffer =
         new volatile unsigned char[kClientPerThreadBufferSize * FLAGS_threads]();
-    RdmaClient *client = new RdmaClient(
-        nullptr, 0, buffer, kClientPerThreadBufferSize * FLAGS_threads, 128, 128, IBV_QPT_RC);
+    RdmaEndpoint client(nullptr, 0, buffer, kClientPerThreadBufferSize * FLAGS_threads, 128, 128,
+                        IBV_QPT_RC);
 
     // all clients connect to same remote
     for (int i = 0; i < FLAGS_threads; i++) {
-        client->Connect(FLAGS_endpoint.c_str());
+        client.Connect(FLAGS_endpoint.c_str());
     }
     LOG(INFO) << "All connections established";
 
     std::vector<std::thread> threads;
     for (int i = 0; i < FLAGS_threads; i++) {
-        threads.emplace_back(std::thread(ClientThreadMain, client, buffer, i));
+        threads.emplace_back(std::thread(ClientThreadMain, std::ref(client), buffer, i));
     }
     for (auto &t : threads) {
         t.join();

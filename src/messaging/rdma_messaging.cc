@@ -12,12 +12,13 @@
 
 namespace rdmamsg {
 
-RdmaWriteMessagingEndpoint::RdmaWriteMessagingEndpoint(RdmaEndpoint* endpoint,
+RdmaWriteMessagingEndpoint::RdmaWriteMessagingEndpoint(RdmaEndpoint& endpoint,
                                                        volatile unsigned char* rdma_buffer,
                                                        int peer_id, size_t local_buffer_offset,
                                                        size_t remote_buffer_offset,
                                                        size_t messaging_buffer_size)
-    : peer_id_(peer_id),
+    : endpoint_(endpoint),
+      peer_id_(peer_id),
       rdma_buffer_(rdma_buffer),
       local_offset_(local_buffer_offset),
       remote_offset_(remote_buffer_offset),
@@ -36,7 +37,6 @@ RdmaWriteMessagingEndpoint::RdmaWriteMessagingEndpoint(RdmaEndpoint* endpoint,
       // Place remote buffer tail at the beginning of the rdma buffer
       remote_buffer_tail_ptr_(reinterpret_cast<volatile size_t*>(rdma_buffer_ + local_offset_ +
                                                                  kRemoteBufferTailPtrOffset)) {
-    CHECK_NOTNULL(endpoint);
     CHECK_NOTNULL(rdma_buffer_);
     // Buffer must be large enough to store local and remote inbound buffer tail
     CHECK_GT(messaging_buffer_size_, kMessagingMetadataSize);
@@ -44,7 +44,6 @@ RdmaWriteMessagingEndpoint::RdmaWriteMessagingEndpoint(RdmaEndpoint* endpoint,
     CHECK_EQ(outbound_buffer_end_ - outbound_buffer_start_,
              inbound_buffer_end_ - inbound_buffer_start_);
 
-    endpoint_ = endpoint;
     outbound_buffer_head_ = outbound_buffer_tail_ = outbound_buffer_start_;
     inbound_buffer_head_ = inbound_buffer_start_;
     remote_buffer_head_ = remote_buffer_start_;
@@ -55,7 +54,7 @@ RdmaWriteMessagingEndpoint::RdmaWriteMessagingEndpoint(RdmaEndpoint* endpoint,
     // We use at most 2 RDMA_WRITE to flush message (1 for usual case, 2 when wrap around).
     // Batched send (send multiple messages at the same time) is achieved by manually triggering
     // FlushOutboundMessage.
-    endpoint_->InitializeFastWrite(peer_id_, 2);
+    endpoint_.InitializeFastWrite(peer_id_, 2);
 }
 
 volatile void* RdmaWriteMessagingEndpoint::AllocateOutboundMessageBuffer(int message_size) {
@@ -154,10 +153,10 @@ int64_t RdmaWriteMessagingEndpoint::FlushOutboundMessage() {
     // and 100% full buffer (head == tail means "empty" in our settings)
     while (remote_avail_size <= total_message_size && refresh_count < kMaxRefreshCount) {
         // Update local copy of remote buffer tail (`*remote_buffer_tail_ptr_`)
-        uint64_t tracker = endpoint_->Read(peer_id_, remote_offset_ + kRemoteBufferTailPtrOffset,
-                                           local_offset_ + kInboundBufferTailPtrOffset,
-                                           sizeof(size_t), IBV_SEND_SIGNALED);
-        endpoint_->WaitForCompletion(peer_id_, true, tracker);
+        uint64_t tracker = endpoint_.Read(peer_id_, remote_offset_ + kRemoteBufferTailPtrOffset,
+                                          local_offset_ + kInboundBufferTailPtrOffset,
+                                          sizeof(size_t), IBV_SEND_SIGNALED);
+        endpoint_.WaitForCompletion(peer_id_, true, tracker);
         remote_avail_size =
             ((messaging_buffer_size_ - kMessagingMetadataSize) / 2) -
             GetDirtyMemorySize(
@@ -173,8 +172,8 @@ int64_t RdmaWriteMessagingEndpoint::FlushOutboundMessage() {
 
     if (outbound_buffer_head_ > outbound_buffer_tail_) {
         track_id =
-            endpoint_->Write(true, peer_id_, outbound_buffer_tail_, remote_buffer_head_,
-                             outbound_buffer_head_ - outbound_buffer_tail_, IBV_SEND_SIGNALED);
+            endpoint_.Write(true, peer_id_, outbound_buffer_tail_, remote_buffer_head_,
+                            outbound_buffer_head_ - outbound_buffer_tail_, IBV_SEND_SIGNALED);
     } else {
         std::vector<std::tuple<uint64_t, uint64_t, uint32_t>> requests = {
             std::make_tuple(outbound_buffer_tail_, remote_buffer_head_,
@@ -183,7 +182,7 @@ int64_t RdmaWriteMessagingEndpoint::FlushOutboundMessage() {
                             outbound_buffer_head_ - outbound_buffer_start_)};
 
         track_id =
-            endpoint_->WriteBatch(true, peer_id_, requests, SignalStrategy::kSignalLast, 0).back();
+            endpoint_.WriteBatch(true, peer_id_, requests, SignalStrategy::kSignalLast, 0).back();
     }
 
     outbound_buffer_tail_ = outbound_buffer_head_;
@@ -192,7 +191,7 @@ int64_t RdmaWriteMessagingEndpoint::FlushOutboundMessage() {
 }
 
 void RdmaWriteMessagingEndpoint::BlockUntilComplete(int64_t flush_id) {
-    endpoint_->WaitForCompletion(peer_id_, true, flush_id);
+    endpoint_.WaitForCompletion(peer_id_, true, flush_id);
 }
 
 InboundMessage RdmaWriteMessagingEndpoint::CheckInboundMessage() {

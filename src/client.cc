@@ -18,10 +18,9 @@ int main(int argc, char **argv) {
 
     sprintf(const_cast<char *>(buffer), "this is client");
     sprintf(const_cast<char *>(buffer + 300), "secret");
-    RdmaClient *endpoint =
-        new RdmaClient(nullptr, 0, reinterpret_cast<volatile unsigned char *>(buffer), buffer_size,
-                       100, 100, IBV_QPT_RC);
-    endpoint->Connect("tcp://192.168.223.1:7889");
+    RdmaEndpoint endpoint(nullptr, 0, reinterpret_cast<volatile unsigned char *>(buffer),
+                          buffer_size, 100, 100, IBV_QPT_RC);
+    endpoint.Connect("tcp://192.168.223.1:7889");
 
     /*
         uint64_t wr_id = endpoint->Send(0, 15);

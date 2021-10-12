@@ -25,20 +25,20 @@ void InitializeKvsData(volatile unsigned char *kvs_buffer) {
     }
 }
 
-void ServerThreadMain(RdmaServer *server, volatile unsigned char *buffer, int id) {
+void ServerThreadMain(RdmaEndpoint &endpoint, volatile unsigned char *buffer, int id) {
     const size_t msg_base_offset = id * kPerThreadMsgBufferSize;
     const size_t kvs_base_offset = FLAGS_threads * kPerThreadMsgBufferSize;
 
     *reinterpret_cast<volatile int *>(buffer + msg_base_offset + sizeof(int)) = id;
     *reinterpret_cast<volatile int *>(buffer + msg_base_offset + sizeof(int) * 2) = FLAGS_threads;
-    ExchangeInfo(server, id, msg_base_offset + sizeof(int),
+    ExchangeInfo(endpoint, id, msg_base_offset + sizeof(int),
                  2 * sizeof(int),               // send client_id and total threads
                  msg_base_offset, sizeof(int),  // receive client's local id
                  true);
     int client_local_id = *reinterpret_cast<volatile int *>(buffer + msg_base_offset);
     LOG(INFO) << "Thread " << id << " completes setup (remote id: " << client_local_id << ")";
 
-    rdmamsg::RdmaWriteMessagingEndpoint msg_ep(server, buffer, id, msg_base_offset,
+    rdmamsg::RdmaWriteMessagingEndpoint msg_ep(endpoint, buffer, id, msg_base_offset,
                                                ComputeRemoteMsgOffset(client_local_id),
                                                kPerThreadMsgBufferSize);
     while (true) {
@@ -64,17 +64,17 @@ int main(int argc, char **argv) {
     const size_t total_buffer_size = FLAGS_threads * kPerThreadMsgBufferSize + kKvsBufferSize;
     volatile unsigned char *buffer = new volatile unsigned char[total_buffer_size]();
     InitializeKvsData(buffer + FLAGS_threads * kPerThreadMsgBufferSize);
-    RdmaServer *server = new RdmaServer(FLAGS_endpoint.c_str(), nullptr, 0, buffer,
-                                        total_buffer_size, 128, 128, IBV_QPT_RC);
+    RdmaEndpoint endpoint(nullptr, 0, buffer, total_buffer_size, 128, 128, IBV_QPT_RC);
+    endpoint.BindToZmqEndpoint(FLAGS_endpoint.c_str());
 
     for (int i = 0; i < FLAGS_threads; i++) {
-        server->Listen();
+        endpoint.Listen();
     }
     LOG(INFO) << "All clients connected";
 
     std::vector<std::thread> threads;
     for (int i = 0; i < FLAGS_threads; i++) {
-        threads.emplace_back(std::thread(ServerThreadMain, server, buffer, i));
+        threads.emplace_back(std::thread(ServerThreadMain, std::ref(endpoint), buffer, i));
     }
     for (auto &t : threads) {
         t.join();

@@ -33,13 +33,13 @@ void SerializeKeyValuePair(volatile void *ptr, const KeyValuePair &kv_pair) {
     std::copy(cptr, cptr + kEntrySize, static_cast<volatile char *>(ptr));
 }
 
-void ExchangeInfo(RdmaEndpoint *endpoint, int remote_id, size_t send_offset, size_t send_size,
+void ExchangeInfo(RdmaEndpoint &endpoint, int remote_id, size_t send_offset, size_t send_size,
                   size_t recv_offset, size_t recv_size, bool send_first) {
-    uint64_t wr_first = endpoint->Recv(remote_id, recv_offset, recv_size);
-    uint64_t wr_second = endpoint->Send(remote_id, send_offset, send_size);
+    uint64_t wr_first = endpoint.Recv(remote_id, recv_offset, recv_size);
+    uint64_t wr_second = endpoint.Send(remote_id, send_offset, send_size);
     if (send_first) {
         std::swap(wr_first, wr_second);
     }
-    endpoint->WaitForCompletion(remote_id, true, wr_first);
-    endpoint->WaitForCompletion(remote_id, true, wr_second);
+    endpoint.WaitForCompletion(remote_id, true, wr_first);
+    endpoint.WaitForCompletion(remote_id, true, wr_second);
 }

@@ -121,7 +121,6 @@ class RdmaEndpoint {
     void *zmq_context_;
     void *zmq_server_socket_;  // ZMQ socket to listen incoming connections
     void *zmq_client_socket_;  // ZMQ socket to add connection with remote
-    [[deprecated]] void *zmq_socket_;
 
     const static size_t kMaxBatchSize = 32;
     // These templates are filled with metadata that can be reused across multiple requests.
@@ -171,7 +170,6 @@ class RdmaEndpoint {
 
     // Initializes the new queue pair and returns the index of `connections_` for new connection
     size_t PrepareNewConnection();
-    [[deprecated]] void ExchangePeerInfo(size_t peer_idx, bool send_first);
     // Modifies the queue pair state to ready-to-send
     void ConnectPeer(size_t peer_idx);
 
@@ -192,25 +190,4 @@ class RdmaEndpoint {
         unsigned int flags);
     // TODO: update all operations to use the request template and remove the work request pointer
     int PostSendWithAutoReclaim(size_t remote_id, struct ibv_send_wr *wr = nullptr);
-};
-
-// wait for clients to connect, implement connect and disconnect
-class [[deprecated]] RdmaServer : public RdmaEndpoint {
-   public:
-    RdmaServer(const char *endpoint, char *ib_dev_name, uint8_t ib_dev_port,
-               volatile unsigned char *buffer, size_t buffer_size, uint32_t max_send_count,
-               uint32_t max_recv_count, ibv_qp_type qp_type);
-    ~RdmaServer();
-    virtual void Listen() override;
-};
-
-// connect to an rdma server
-class [[deprecated]] RdmaClient : public RdmaEndpoint {
-   public:
-    RdmaClient(char *ib_dev_name, uint8_t ib_dev_port, volatile unsigned char *buffer,
-               size_t buffer_size, uint32_t max_send_count, uint32_t max_recv_count,
-               ibv_qp_type qp_type);
-    ~RdmaClient();
-    virtual void Connect(const char *endpoint) override;
-    void Disconnect();
 };

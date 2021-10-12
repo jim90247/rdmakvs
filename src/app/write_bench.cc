@@ -30,14 +30,15 @@ void ServerMain() {
     const size_t buffer_size = FLAGS_thread_buffer_size * FLAGS_threads + buffer_start_offset;
     volatile char *buffer = new volatile char[buffer_size]();
 
-    RdmaServer *rdma_server = new RdmaServer(FLAGS_endpoint.c_str(), nullptr, 0,
-                                             reinterpret_cast<volatile unsigned char *>(buffer),
-                                             buffer_size, 128, 128, IBV_QPT_RC);
+    RdmaEndpoint rdma_server(nullptr, 0, reinterpret_cast<volatile unsigned char *>(buffer),
+                             buffer_size, 128, 128, IBV_QPT_RC);
+    rdma_server.BindToZmqEndpoint(FLAGS_endpoint.c_str());
+
     std::vector<uint64_t> recv_wr_ids;
     // Use one queue pair per thread
     for (int t = 0; t < FLAGS_threads; t++) {
-        rdma_server->Listen();
-        recv_wr_ids.push_back(rdma_server->Recv(t, t * sizeof(int), sizeof(int)));
+        rdma_server.Listen();
+        recv_wr_ids.push_back(rdma_server.Recv(t, t * sizeof(int), sizeof(int)));
     }
     LOG(INFO) << "All clients connected";
 
@@ -47,20 +48,20 @@ void ServerMain() {
     // send start signal to clients (the cotent is the client id)
     for (int t = 0; t < FLAGS_threads; t++) {
         *reinterpret_cast<volatile int *>(buffer + t * sizeof(int)) = t;
-        rdma_server->Send(t, t * sizeof(int), sizeof(int));
+        rdma_server.Send(t, t * sizeof(int), sizeof(int));
     }
 
     LOG(INFO) << "Start microbenchmark";
 
     // Wait for clients' response
     for (int i = 0; i < FLAGS_threads; i++) {
-        rdma_server->WaitForCompletion(i, true, recv_wr_ids[i]);
+        rdma_server.WaitForCompletion(i, true, recv_wr_ids[i]);
         CHECK_EQ(*reinterpret_cast<volatile int *>(buffer + i * sizeof(int)), i);
     }
     LOG(INFO) << "All clients completed successfully";
 }
 
-void ClientThreadWriteMain(volatile char *buffer, RdmaClient *client, size_t remote_id,
+void ClientThreadWriteMain(volatile char *buffer, RdmaEndpoint &client, size_t remote_id,
                            std::promise<double> &&iops_result) {
     size_t local_thread_offset = remote_id * FLAGS_thread_buffer_size;
     size_t remote_thread_offset = remote_id * FLAGS_thread_buffer_size + buffer_start_offset;
@@ -68,15 +69,15 @@ void ClientThreadWriteMain(volatile char *buffer, RdmaClient *client, size_t rem
 
     // Post recv to receive start signal/client id
     uint64_t start_signal_tracker =
-        client->Recv(remote_id, remote_id * FLAGS_thread_buffer_size, sizeof(int));
-    client->WaitForCompletion(remote_id, true, start_signal_tracker);
+        client.Recv(remote_id, remote_id * FLAGS_thread_buffer_size, sizeof(int));
+    client.WaitForCompletion(remote_id, true, start_signal_tracker);
 
     // the unique id at server side
     int client_id = *reinterpret_cast<volatile int *>(thread_buffer);
     LOG(INFO) << "Client " << client_id << " (remote_id=" << remote_id << ") starts now";
 
     // start benchmark
-    client->InitializeFastWrite(remote_id, FLAGS_batch_size);
+    client.InitializeFastWrite(remote_id, FLAGS_batch_size);
     std::vector<std::tuple<uint64_t, uint64_t, uint32_t>> requests(FLAGS_batch_size);
     auto start = std::chrono::steady_clock::now();
     int batch_idx = 0;
@@ -90,16 +91,16 @@ void ClientThreadWriteMain(volatile char *buffer, RdmaClient *client, size_t rem
         }
         if (++batch_idx >= FLAGS_batch_size) {
             // rely on auto reclaim feature
-            client->WriteBatch(true, remote_id, requests, SignalStrategy::kSignalLast,
-                               IBV_SEND_INLINE);
+            client.WriteBatch(true, remote_id, requests, SignalStrategy::kSignalLast,
+                              IBV_SEND_INLINE);
             batch_idx = 0;
         }
     }
     auto end = std::chrono::steady_clock::now();
 
     *reinterpret_cast<volatile int *>(thread_buffer) = client_id;
-    uint64_t end_response_tracker = client->Send(remote_id, local_thread_offset, sizeof(int));
-    client->WaitForCompletion(remote_id, true, end_response_tracker);
+    uint64_t end_response_tracker = client.Send(remote_id, local_thread_offset, sizeof(int));
+    client.WaitForCompletion(remote_id, true, end_response_tracker);
 
     double iops = FLAGS_rounds * 1e6 /
                   static_cast<double>(
@@ -111,20 +112,19 @@ void ClientThreadWriteMain(volatile char *buffer, RdmaClient *client, size_t rem
 void ClientMain() {
     const size_t buffer_size = FLAGS_thread_buffer_size * FLAGS_threads + buffer_start_offset;
     volatile char *buffer = new volatile char[buffer_size]();
-    RdmaClient *rdma_client =
-        new RdmaClient(nullptr, 0, reinterpret_cast<volatile unsigned char *>(buffer), buffer_size,
-                       128, 128, IBV_QPT_RC);
+    RdmaEndpoint rdma_client(nullptr, 0, reinterpret_cast<volatile unsigned char *>(buffer),
+                             buffer_size, 128, 128, IBV_QPT_RC);
 
     std::vector<std::thread> threads;
     std::vector<std::promise<double>> iops_promises(FLAGS_threads);
     std::vector<std::future<double>> iops_futures;
     for (int t = 0; t < FLAGS_threads; t++) {
-        rdma_client->Connect(FLAGS_endpoint.c_str());
+        rdma_client.Connect(FLAGS_endpoint.c_str());
         LOG(INFO) << "Connection " << t << " established";
     }
     for (int t = 0; t < FLAGS_threads; t++) {
         iops_futures.push_back(iops_promises[t].get_future());
-        threads.push_back(std::thread(ClientThreadWriteMain, buffer, rdma_client, t,
+        threads.push_back(std::thread(ClientThreadWriteMain, buffer, std::ref(rdma_client), t,
                                       std::move(iops_promises[t])));
     }
 
